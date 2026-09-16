@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "OSV RECICLAR",
+    "slug": "osv-reciclar",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/opcicon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/opcicon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.osvreciclar.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to take photos for evidence."
+        }
+      ],
+      [
+        "react-native-vosk",
+        {
+          "models": ["assets/vosk/model-en-en", "assets/vosk/model-es-es"],
+          "iOSMicrophonePermission": "Allow $(PRODUCT_NAME) to use the microphone for the hands-free voice agent."
+        }
+      ]
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "owner": "saivineeth81799",
+    "extra": {
+      "eas": {
+        "projectId": "20617938-ab95-4c8a-8d00-2e9456cdb978"
+      }
+    }
+  }
+}
