@@ -12,9 +12,21 @@ import { Platform } from 'react-native';
  * fallback) -> the screen calls `listen(grammar)` -> Vosk returns a transcript
  * constrained to that screen's grammar -> pushed to `onTranscript`.
  *
+ * Hands-free interruption: `speak(text, { bargeIn: true, grammar })` also starts the
+ * native VoiceDuplex listener (echo-cancelled mic). When the worker starts
+ * talking over Monte it stops Monte, recognizes their sentence and pushes it to
+ * `onTranscript` — the same path as a normal answer. Tapping still works too.
+ *
  * Vosk is loaded defensively so the screen still works through the typed input
  * on a build where the native module isn't linked (Expo Go, tests).
  */
+
+// eslint-disable-next-line import/first
+import VoiceDuplex from '../../modules/voice-duplex';
+
+// How far (dB) the worker's voice must rise above what's left of Monte's voice
+// in the echo-cancelled mic before Monte is interrupted.
+const BARGE_IN_MARGIN_DB = 10;
 
 let Speech = null;
 try {
@@ -113,6 +125,9 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
     const gotResultRef = useRef(false);
     const subsRef = useRef([]);
     const lastFinal = useRef({ t: '', at: 0 });
+    const speakIdRef = useRef(0); // bumped per line; a stopped line's callbacks are ignored
+    const bargeIdRef = useRef(0); // native barge-in listener for the current line (0 = none)
+    const callLineRef = useRef(null); // line spoken on the call path: { id, onStart, onDone }
 
     const onTranscriptRef = useRef(onTranscript);
     const onNoResultRef = useRef(onNoResult);
@@ -243,6 +258,85 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [set, log]);
 
+    // Stop Monte, whichever voice path the current line is on.
+    const stopTts = () => {
+        try {
+            Speech?.stop();
+        } catch (e) {
+            /* ignore */
+        }
+        if (callLineRef.current) {
+            callLineRef.current = null;
+            try {
+                VoiceDuplex?.stopSpeakingOnCall();
+            } catch (e) {
+                /* ignore */
+            }
+        }
+    };
+
+    const stopBargeIn = () => {
+        if (!bargeIdRef.current) return;
+        bargeIdRef.current = 0;
+        try {
+            VoiceDuplex?.stopBargeIn();
+        } catch (e) {
+            /* ignore */
+        }
+    };
+
+    /* ------------------------------------------------------- barge-in       */
+    useEffect(() => {
+        if (!VoiceDuplex) return undefined;
+        const subs = [
+            // The worker started talking over Monte: stop Monte, like a tap.
+            VoiceDuplex.addListener('onBargeInSpeech', ({ id }) => {
+                if (id !== bargeIdRef.current || !speakingRef.current) return;
+                log('you spoke — stopping Monte');
+                speakIdRef.current += 1; // Monte was cut off: skip its onDone
+                stopTts();
+                speakingRef.current = false;
+                set('listening');
+            }),
+            // Their sentence, recognized after Monte stopped.
+            VoiceDuplex.addListener('onBargeInResult', ({ id, text }) => {
+                if (id !== bargeIdRef.current) return;
+                bargeIdRef.current = 0;
+                const t = String(text || '').trim();
+                log(`result (interrupt): "${t}"`);
+                set('idle');
+                if (t) {
+                    gotResultRef.current = true;
+                    onTranscriptRef.current?.(t);
+                } else {
+                    onNoResultRef.current?.('timeout');
+                }
+            }),
+            VoiceDuplex.addListener('onBargeInLog', ({ text }) => log(text)),
+            // Monte's voice on the call path (see speak).
+            VoiceDuplex.addListener('onCallSpeechStart', ({ id }) => {
+                if (callLineRef.current?.id === id) callLineRef.current.onStart();
+            }),
+            VoiceDuplex.addListener('onCallSpeechDone', ({ id }) => {
+                const line = callLineRef.current;
+                if (line?.id !== id) return;
+                callLineRef.current = null;
+                line.onDone();
+            }),
+        ];
+        return () => {
+            subs.forEach((s) => s.remove());
+            stopBargeIn();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [set, log]);
+
+    // Load the model for the barge-in recognizer early, so the first
+    // interruption isn't slow.
+    useEffect(() => {
+        if (modelReady) VoiceDuplex?.preloadBargeIn(model);
+    }, [modelReady, model]);
+
     const stopInternal = () => {
         listeningRef.current = false;
         try {
@@ -289,17 +383,24 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
     );
 
     const stopListening = useCallback(() => {
+        stopBargeIn();
         stopInternal();
         setPartial('');
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const speak = useCallback(
-        (text, { onDone } = {}) => {
+        (text, { onDone, bargeIn = false, grammar = null } = {}) => {
             let finished = false;
+            speakIdRef.current += 1;
+            const id = speakIdRef.current;
             const finish = () => {
                 if (finished) return;
                 finished = true;
+                // Stopped (tap to talk) or replaced by a newer line: its "done"
+                // must not re-open the mic or reset the newer line's state.
+                if (id !== speakIdRef.current) return;
+                stopBargeIn(); // Monte finished without being interrupted
                 speakingRef.current = false;
                 if (statusRef.current === 'speaking') set('idle');
                 onDone?.();
@@ -315,11 +416,8 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             } catch (e) {
                 /* ignore */
             }
-            try {
-                Speech.stop();
-            } catch (e) {
-                /* ignore */
-            }
+            stopBargeIn();
+            stopTts();
             const cap = Math.min(20000, 1600 + String(text).length * 75);
             const timer = setTimeout(() => {
                 log('TTS onDone never fired — timeout');
@@ -329,11 +427,40 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                 clearTimeout(timer);
                 finish();
             };
+            // Start listening for an interruption only once Monte's voice is
+            // actually playing — the listener learns how loud Monte is from its
+            // first moments, and the TTS engine can take ~1 s to start.
+            const startBargeIn = () => {
+                if (!bargeIn || !VoiceDuplex || !modelReady) return;
+                if (finished || id !== speakIdRef.current) return;
+                try {
+                    // same word list the normal answer would get (see listen)
+                    const words = Array.isArray(grammar) && grammar.length ? JSON.stringify(grammar) : null;
+                    bargeIdRef.current = VoiceDuplex.startBargeIn(model, BARGE_IN_MARGIN_DB, words);
+                } catch (e) {
+                    bargeIdRef.current = 0;
+                    log(`barge-in unavailable: ${e?.message || e}`);
+                }
+            };
+            // With barge-in, Monte talks on the call path so the phone's echo
+            // canceller removes Monte from the mic; as ordinary media Monte is
+            // as loud in the mic as the worker and can't be interrupted.
+            if (bargeIn && VoiceDuplex?.speakOnCall && modelReady) {
+                callLineRef.current = { id, onStart: startBargeIn, onDone: wrap };
+                try {
+                    VoiceDuplex.speakOnCall(String(text), ttsLang, id);
+                    return;
+                } catch (e) {
+                    callLineRef.current = null;
+                    log(`call voice unavailable: ${e?.message || e}`);
+                }
+            }
             try {
                 Speech.speak(String(text), {
                     language: ttsLang,
                     pitch: 1.0,
                     rate: Platform.OS === 'ios' ? 0.5 : 1.0,
+                    onStart: startBargeIn,
                     onDone: wrap,
                     onStopped: wrap,
                     onError: wrap,
@@ -342,15 +469,14 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                 wrap();
             }
         },
-        [ttsLang, set, log]
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [ttsLang, set, log, modelReady, model]
     );
 
     const stopSpeaking = useCallback(() => {
-        try {
-            Speech?.stop();
-        } catch (e) {
-            /* ignore */
-        }
+        speakIdRef.current += 1; // cancel the current line's onDone
+        stopBargeIn();
+        stopTts();
         speakingRef.current = false;
         if (statusRef.current === 'speaking') set('idle');
     }, [set]);
@@ -369,12 +495,9 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             } catch (e) {
                 /* ignore */
             }
-            try {
-                Speech?.stop();
-            } catch (e) {
-                /* ignore */
-            }
+            stopTts(); // also leaves call-audio mode if Monte was on the call path
         },
+        // eslint-disable-next-line react-hooks/exhaustive-deps
         []
     );
 

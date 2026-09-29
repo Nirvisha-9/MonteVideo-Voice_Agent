@@ -8,6 +8,7 @@ import styles, { VC } from './voiceStyles';
  */
 
 import { loadModelOnce } from './useSpeech';
+import VoiceDuplex from '../../modules/voice-duplex';
 
 let Vosk = null;
 try {
@@ -101,6 +102,33 @@ export default function VoiceTest({ onClose }) {
             });
     }, [ready, add]);
 
+    // Can the phone take Monte's own voice out of the mic? (see VoiceDuplexModule)
+    const echoTest = useCallback(
+        async (lang) => {
+            if (!VoiceDuplex) {
+                add('echo test module not in this build — rebuild');
+                return;
+            }
+            stop();
+            const sub = VoiceDuplex.addListener('onEchoTestStatus', ({ text }) => add(`▶ ${text}`));
+            try {
+                const r = await VoiceDuplex.runEchoTest(lang);
+                add(`${r.device} · echo canceller available: ${r.aecAvailable}`);
+                ['A', 'B', 'C'].forEach((k) => {
+                    const s = r[k];
+                    if (!s) return;
+                    add(`${k}: quiet ${s.quiet} dB · Monte ${s.echo} dB · you+Monte ${s.talk} dB · aec ${s.aecOn}`);
+                });
+            } catch (e) {
+                add(`ERROR echo test: ${e?.message || e}`);
+            } finally {
+                sub.remove();
+            }
+        },
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [add]
+    );
+
     const stop = useCallback(() => {
         try {
             Vosk?.stop();
@@ -150,6 +178,20 @@ export default function VoiceTest({ onClose }) {
                         onPress={stop}
                     >
                         <Text style={styles.primaryBtnText}>■ Stop</Text>
+                    </TouchableOpacity>
+                </View>
+                <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                    <TouchableOpacity
+                        style={[styles.primaryBtn, { flex: 1, marginRight: 8 }]}
+                        onPress={() => echoTest('en')}
+                    >
+                        <Text style={styles.primaryBtnText}>Echo test (EN)</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.primaryBtn, { flex: 1, marginLeft: 8 }]}
+                        onPress={() => echoTest('es')}
+                    >
+                        <Text style={styles.primaryBtnText}>Echo test (ES)</Text>
                     </TouchableOpacity>
                 </View>
             </View>

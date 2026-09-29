@@ -1,0 +1,24 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:1:1-4:12
+INJECTED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:1:1-4:12
+	package
+		INJECTED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:1:11-69
+uses-permission#android.permission.RECORD_AUDIO
+ADDED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:2:3-69
+	android:name
+		ADDED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:2:20-66
+uses-permission#android.permission.MODIFY_AUDIO_SETTINGS
+ADDED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:3:3-78
+	android:name
+		ADDED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:3:20-75
+uses-sdk
+INJECTED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml
+INJECTED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml
+	android:targetSdkVersion
+		INJECTED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml

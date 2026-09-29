@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.voiceduplex'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.voiceduplex"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+}
+
+dependencies {
+  // same versions react-native-vosk uses — one copy of the recognizer in the app
+  implementation 'net.java.dev.jna:jna:5.17.0@aar'
+  implementation 'com.alphacephei:vosk-android:0.3.70@aar'
+}

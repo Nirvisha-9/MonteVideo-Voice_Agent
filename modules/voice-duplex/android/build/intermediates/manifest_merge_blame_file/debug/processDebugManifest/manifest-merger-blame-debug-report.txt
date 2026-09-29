@@ -1,0 +1,14 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="expo.modules.voiceduplex" >
+4
+5    <uses-sdk android:minSdkVersion="24" />
+6
+7    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+7-->/Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:2:3-69
+7-->/Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:2:20-66
+8    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+8-->/Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:3:3-78
+8-->/Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/AndroidManifest.xml:3:20-75
+9
+10</manifest>

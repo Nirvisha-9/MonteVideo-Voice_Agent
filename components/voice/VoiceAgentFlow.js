@@ -207,6 +207,8 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         noResultRef.current = 0;
         wantListenRef.current = phase !== 'done';
         speak(spokenLine, {
+            bargeIn: wantListenRef.current && voiceOn, // worker can talk over Monte
+            grammar: grammarRef.current, // …and is understood like a normal answer
             onDone: () => {
                 if (wantListenRef.current && voiceOn) listen(grammarRef.current);
             },
@@ -288,6 +290,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         noResultRef.current = 0;
         wantListenRef.current = true;
         speak(t.readItem(i + 1, ro.opts[i].label), {
+            bargeIn: voiceOn,
             onDone: () => {
                 if (readOutRef.current && voiceOn) listen(null, { timeout: 3500 });
             },
@@ -550,6 +553,8 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     // Manual "talk to me now" — the reliable fallback if auto-listen misses.
     const talkNow = () => {
         cancelReadOut();
+        // the worker is answering now — don't let the prompt effect re-speak it
+        spokenRef.current = spokenLine;
         noResultRef.current = 0;
         wantListenRef.current = phase !== 'done';
         voice.stopSpeaking();

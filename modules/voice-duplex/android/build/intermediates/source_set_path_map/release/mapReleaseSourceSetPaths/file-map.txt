@@ -1,0 +1,8 @@
+expo.modules.voiceduplex.voice-duplex-jna-5.17.0-0 /Users/nirvishasriram/.gradle/caches/8.14.3/transforms/a24390261be334b714f7fd05a5d87fe3/transformed/jna-5.17.0/res
+expo.modules.voiceduplex.voice-duplex-pngs-1 /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/build/generated/res/pngs/release
+expo.modules.voiceduplex.voice-duplex-resValues-2 /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/build/generated/res/resValues/release
+expo.modules.voiceduplex.voice-duplex-mergeReleaseResources-3 /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/build/intermediates/incremental/release/mergeReleaseResources/merged.dir
+expo.modules.voiceduplex.voice-duplex-mergeReleaseResources-4 /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/build/intermediates/incremental/release/mergeReleaseResources/stripped.dir
+expo.modules.voiceduplex.voice-duplex-release-5 /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/build/intermediates/merged_res/release/mergeReleaseResources
+expo.modules.voiceduplex.voice-duplex-main-6 /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/main/res
+expo.modules.voiceduplex.voice-duplex-release-7 /Users/nirvishasriram/MonteVideo-Voice_Agent/modules/voice-duplex/android/src/release/res

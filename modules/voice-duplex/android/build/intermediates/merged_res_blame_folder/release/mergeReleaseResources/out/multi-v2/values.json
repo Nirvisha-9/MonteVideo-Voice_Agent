@@ -1,0 +1,34 @@
+{
+    "logs": [
+        {
+            "outputFile": "expo.modules.voiceduplex.voice-duplex-release-4:/values/values.xml",
+            "map": [
+                {
+                    "source": "/Users/nirvishasriram/.gradle/caches/8.14.3/transforms/a24390261be334b714f7fd05a5d87fe3/transformed/jna-5.17.0/res/values/values.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "60",
+                        "endOffsets": "111"
+                    }
+                }
+            ]
+        },
+        {
+            "outputFile": "expo.modules.voiceduplex.voice-duplex-mergeReleaseResources-2:/values/values.xml",
+            "map": [
+                {
+                    "source": "/Users/nirvishasriram/.gradle/caches/8.14.3/transforms/a24390261be334b714f7fd05a5d87fe3/transformed/jna-5.17.0/res/values/values.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "60",
+                        "endOffsets": "111"
+                    }
+                }
+            ]
+        }
+    ]
+}
