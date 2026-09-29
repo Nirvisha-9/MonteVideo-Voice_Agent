@@ -33,7 +33,7 @@ class BargeInListener(
   private val marginDb: Double,
   private val grammar: String?,
   private val onSpeech: () -> Unit,
-  private val onResult: (String) -> Unit,
+  private val onResult: (text: String, wav: String?) -> Unit,
   private val onLog: (String) -> Unit,
 ) {
   private val running = AtomicBoolean(false)
@@ -116,9 +116,10 @@ class BargeInListener(
       if (!triggered || !running.get()) return
       recognizing = true
       onSpeech()
-      val text = recognize(rec, frame, preRoll, preRollPos, preRollFilled)
+      val heard = ArrayList<ShortArray>() // the worker's sentence, for cloud transcription
+      val text = recognize(rec, frame, preRoll, preRollPos, preRollFilled, heard)
       recognizing = false
-      if (running.get()) onResult(text)
+      if (running.get()) onResult(text, AnswerListener.wavBase64(heard))
     } finally {
       recognizing = false
       try { rec.stop() } catch (e: Exception) { /* ignore */ }
@@ -129,13 +130,17 @@ class BargeInListener(
   }
 
   /** Recognize the worker's sentence: the buffered start, then live audio until they stop. */
-  private fun recognize(rec: AudioRecord, frame: ShortArray, preRoll: ShortArray, pos: Int, filled: Boolean): String {
+  private fun recognize(
+    rec: AudioRecord, frame: ShortArray, preRoll: ShortArray, pos: Int, filled: Boolean,
+    heard: MutableList<ShortArray>,
+  ): String {
     val model = model(modelPath)
     val recognizer = if (grammar != null) Recognizer(model, RATE.toFloat(), grammar) else Recognizer(model, RATE.toFloat())
     recognizer.use { r ->
       val start = if (filled) pos else 0
       val len = if (filled) preRoll.size else pos
       val ordered = ShortArray(len) { preRoll[(start + it) % preRoll.size] }
+      heard.add(ordered)
       if (r.acceptWaveForm(ordered, ordered.size)) {
         val t = textOf(r.result)
         if (t.isNotEmpty()) return t
@@ -143,6 +148,7 @@ class BargeInListener(
       val end = System.currentTimeMillis() + MAX_UTTERANCE_MS
       while (running.get() && System.currentTimeMillis() < end) {
         if (!readFull(rec, frame)) break
+        heard.add(frame.copyOf())
         if (r.acceptWaveForm(frame, frame.size)) {
           val t = textOf(r.result)
           if (t.isNotEmpty()) return t
@@ -152,15 +158,6 @@ class BargeInListener(
     }
   }
 
-  private fun readFull(rec: AudioRecord, buf: ShortArray): Boolean {
-    var got = 0
-    while (got < buf.size) {
-      val n = rec.read(buf, got, buf.size - got)
-      if (n <= 0) return false
-      got += n
-    }
-    return true
-  }
 
   private fun levelDb(buf: ShortArray): Double {
     var sum = 0.0
@@ -174,12 +171,7 @@ class BargeInListener(
     return s[((s.size - 1) * p / 100.0).toInt()]
   }
 
-  // "[unk]" = something outside the word list; the app treats that as no answer
-  private fun textOf(json: String): String = try {
-    JSONObject(json).optString("text", "").replace("[unk]", "").trim().replace(Regex("\\s+"), " ")
-  } catch (e: Exception) {
-    ""
-  }
+  private fun textOf(json: String): String = AnswerListener.textOf(json)
 
   private fun fmt(x: Double) = String.format("%.1f", x)
 
@@ -198,8 +190,18 @@ class BargeInListener(
     private var cachedModel: Model? = null
     private var cachedPath: String? = null
 
+    fun readFull(rec: AudioRecord, buf: ShortArray): Boolean {
+      var got = 0
+      while (got < buf.size) {
+        val n = rec.read(buf, got, buf.size - got)
+        if (n <= 0) return false
+        got += n
+      }
+      return true
+    }
+
     @Synchronized
-    private fun model(path: String): Model {
+    fun model(path: String): Model {
       if (cachedPath != path || cachedModel == null) {
         cachedModel?.close()
         cachedModel = Model(path)

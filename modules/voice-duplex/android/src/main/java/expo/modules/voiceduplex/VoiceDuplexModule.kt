@@ -41,8 +41,29 @@ class VoiceDuplexModule : Module() {
     Name("VoiceDuplex")
     Events(
       "onEchoTestStatus", "onBargeInSpeech", "onBargeInResult", "onBargeInLog",
-      "onCallSpeechStart", "onCallSpeechDone",
+      "onCallSpeechStart", "onCallSpeechDone", "onCallSpeechRange",
+      "onListenPartial", "onListenResult",
     )
+
+    // The worker's answer after Monte finishes — see AnswerListener.
+    Function("listen") { modelName: String, grammar: String?, timeoutMs: Int ->
+      answer?.stop()
+      val id = ++answerId
+      answer = AnswerListener(
+        modelDir(modelName),
+        grammar,
+        timeoutMs,
+        onPartial = { text -> sendEvent("onListenPartial", mapOf("id" to id, "text" to text)) },
+        onResult = { text, wav -> sendEvent("onListenResult", mapOf("id" to id, "text" to text, "audio" to wav)) },
+        onLog = { line -> Log.i(TAG, line); sendEvent("onBargeInLog", mapOf("text" to line)) },
+      ).also { it.start() }
+      id
+    }
+
+    Function("stopListening") {
+      answer?.stop()
+      answer = null
+    }
 
     // Monte's voice on the call path, so the echo canceller can remove it — see CallSpeaker.
     Function("speakOnCall") { text: String, lang: String, id: Int ->
@@ -56,6 +77,7 @@ class VoiceDuplexModule : Module() {
 
     OnDestroy {
       bargeIn?.stop()
+      answer?.stop()
       speaker?.shutdown()
     }
 
@@ -78,10 +100,10 @@ class VoiceDuplexModule : Module() {
           speaker?.stop(holdMode = true)
           sendEvent("onBargeInSpeech", mapOf("id" to id))
         },
-        onResult = { text ->
+        onResult = { text, wav ->
           Log.i(TAG, "barge-in heard: \"$text\"")
           speaker?.releaseMode()
-          sendEvent("onBargeInResult", mapOf("id" to id, "text" to text))
+          sendEvent("onBargeInResult", mapOf("id" to id, "text" to text, "audio" to wav))
         },
         onLog = { line -> Log.i(TAG, line); sendEvent("onBargeInLog", mapOf("text" to line)) },
       ).also { it.start() }
@@ -110,12 +132,15 @@ class VoiceDuplexModule : Module() {
     get() = appContext.reactContext ?: throw IllegalStateException("no context")
 
   private var bargeIn: BargeInListener? = null
+  private var answer: AnswerListener? = null
+  private var answerId = 0
 
   private var speaker: CallSpeaker? = null
   private val callSpeaker: CallSpeaker
     get() = speaker ?: CallSpeaker(
       context,
       onStart = { id -> sendEvent("onCallSpeechStart", mapOf("id" to id)) },
+      onRange = { id, start -> sendEvent("onCallSpeechRange", mapOf("id" to id, "start" to start)) },
       onDone = { id, stopped -> sendEvent("onCallSpeechDone", mapOf("id" to id, "stopped" to stopped)) },
     ).also { speaker = it }
   private var bargeInId = 0

@@ -15,9 +15,9 @@ const TIMEOUT_MS = 7000;
 const APP_SHARED_TOKEN = '';
 
 let callableFn = null;
+let transcribeFn = null;
 
-function getCallable() {
-    if (callableFn) return callableFn;
+function getFunctionsInstance() {
     // Loaded lazily so unit tests / environments without Firebase don't choke.
     // eslint-disable-next-line global-require
     require('../../firebase');
@@ -25,7 +25,12 @@ function getCallable() {
     const { getApp } = require('firebase/app');
     // eslint-disable-next-line global-require
     const { getFunctions, httpsCallable } = require('firebase/functions');
-    const functions = getFunctions(getApp(), REGION);
+    return { functions: getFunctions(getApp(), REGION), httpsCallable };
+}
+
+function getCallable() {
+    if (callableFn) return callableFn;
+    const { functions, httpsCallable } = getFunctionsInstance();
     callableFn = httpsCallable(functions, 'interpret', { timeout: TIMEOUT_MS });
     return callableFn;
 }
@@ -49,6 +54,51 @@ export async function interpretWithLLM(payload) {
         };
     } catch (e) {
         return null;
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+/* ------------------------------------------------ cloud speech-to-text   */
+
+// The worker is waiting on this: give up quickly and use the phone's own
+// transcript instead.
+const STT_TIMEOUT_MS = 5000;
+// After a failure (offline, not deployed) skip the cloud for a while so each
+// answer doesn't wait out the timeout.
+const STT_BACKOFF_MS = 60000;
+let sttDownUntil = 0;
+
+/**
+ * Calls the `transcribe` Cloud Function with the worker's recorded answer.
+ * Resolves to { transcript, command, confidence }, { error } (offline, timeout,
+ * not deployed) or null (recently failed; skipped) — on anything but a result
+ * the caller uses the on-device transcript.
+ */
+export async function transcribeWithCloud(payload) {
+    if (Date.now() < sttDownUntil) return null;
+    let timer = null;
+    try {
+        if (!transcribeFn) {
+            const { functions, httpsCallable } = getFunctionsInstance();
+            transcribeFn = httpsCallable(functions, 'transcribe', { timeout: STT_TIMEOUT_MS });
+        }
+        const result = await Promise.race([
+            transcribeFn({ ...payload, appToken: APP_SHARED_TOKEN }),
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error('stt-timeout')), STT_TIMEOUT_MS);
+            }),
+        ]);
+        const data = result?.data;
+        if (!data) return null;
+        return {
+            transcript: String(data.transcript || ''),
+            command: String(data.command || ''),
+            confidence: Number(data.confidence) || 0,
+        };
+    } catch (e) {
+        sttDownUntil = Date.now() + STT_BACKOFF_MS;
+        return { error: String(e?.message || e) };
     } finally {
         if (timer) clearTimeout(timer);
     }

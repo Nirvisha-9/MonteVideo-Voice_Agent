@@ -22,6 +22,7 @@ import java.util.Locale
 class CallSpeaker(
   private val context: Context,
   private val onStart: (Int) -> Unit,
+  private val onRange: (id: Int, start: Int) -> Unit,
   private val onDone: (id: Int, stopped: Boolean) -> Unit,
 ) {
   private val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -95,6 +96,11 @@ class CallSpeaker(
   private val listener = object : UtteranceProgressListener() {
     override fun onStart(utteranceId: String?) {
       utteranceId?.toIntOrNull()?.let(onStart)
+    }
+
+    // where in the text Monte is (e.g. which list item is being read)
+    override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+      utteranceId?.toIntOrNull()?.let { onRange(it, start) }
     }
 
     override fun onDone(utteranceId: String?) {

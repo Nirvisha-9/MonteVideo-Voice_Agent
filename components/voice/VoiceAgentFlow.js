@@ -14,7 +14,7 @@ import Listening from './Listening';
 import useSpeech from './useSpeech';
 import VoiceTest from './VoiceTest';
 import buildGrammar from './voiceGrammar';
-import { interpretWithLLM } from './llmInterpreter';
+import { interpretWithLLM, transcribeWithCloud } from './llmInterpreter';
 import { getStrings } from './voiceStrings';
 import {
     getCategories,
@@ -171,9 +171,9 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const voice = useSpeech({
         lang: VOICE_LANG,
         model: VOICE_MODEL,
-        onTranscript: (text) => {
+        onTranscript: (text, audio) => {
             noResultRef.current = 0;
-            handleUtteranceRef.current(text);
+            handleUtteranceRef.current(text, audio);
         },
         onNoResult: handleNoResult,
     });
@@ -270,14 +270,19 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [spokenLine, voiceOn, voice.modelReady, readOut]);
 
-    // Read the option list aloud, one at a time, with a short listen gap after
-    // each — so the worker can name/number their pick the moment they hear it
-    // and Monte stops right there.
+    // Read the option list aloud from item `i`, so the worker can name/number
+    // their pick the moment they hear it and Monte stops right there.
+    //
+    // Where Monte can be interrupted by voice, the rest of the list is one
+    // continuous line (no pause between items) and the item being read is
+    // highlighted as Monte reaches it. Otherwise each item is followed by a
+    // short listen gap for the answer.
     const READ_OUT_MAX = 8;
     const speakReadOutItem = (i) => {
         const ro = readOutRef.current;
         if (!ro) return;
-        if (i >= ro.opts.length || i >= READ_OUT_MAX) {
+        const end = Math.min(ro.opts.length, READ_OUT_MAX);
+        if (i >= end) {
             readOutRef.current = null;
             setReadOut(null);
             setAgentLine(t.whichOne);
@@ -289,10 +294,37 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         setReadOut(next);
         noResultRef.current = 0;
         wantListenRef.current = true;
+
+        if (voiceOn && voice.canBargeIn) {
+            let text = '';
+            const starts = []; // where each item begins in `text`
+            for (let k = i; k < end; k += 1) {
+                starts.push(text.length);
+                text += `${t.readItem(k + 1, ro.opts[k].label)} `;
+            }
+            speak(text.trim(), {
+                bargeIn: true,
+                onProgress: (at) => {
+                    const cur = readOutRef.current;
+                    if (!cur) return;
+                    let k = 0;
+                    while (k + 1 < starts.length && starts[k + 1] <= at) k += 1;
+                    if (cur.i !== i + k) {
+                        readOutRef.current = { ...cur, i: i + k };
+                        setReadOut(readOutRef.current);
+                    }
+                },
+                onDone: () => {
+                    if (readOutRef.current) speakReadOutItemRef.current(end); // whole list read
+                },
+            });
+            return;
+        }
+
         speak(t.readItem(i + 1, ro.opts[i].label), {
             bargeIn: voiceOn,
             onDone: () => {
-                if (readOutRef.current && voiceOn) listen(null, { timeout: 3500 });
+                if (readOutRef.current && voiceOn) listen(null, { timeout: 2000 });
             },
         });
     };
@@ -468,14 +500,55 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         }
     };
 
-    const handleUtterance = async (raw) => {
-        const text = String(raw || '').trim();
-        if (!text) return;
+    // What the cloud needs to know about this screen (options, context).
+    const screenContext = () => {
+        const ro = readOutRef.current;
+        const opts = ro ? ro.opts
+            : phase === 'client' ? clientOptions
+                : phase === 'location' ? locationOptions
+                    : phase === 'category' ? categoryOptions
+                        : phase === 'subcategory' ? subOptions
+                            : [];
+        return {
+            phase,
+            language: VOICE_LANG,
+            options: opts.map((o, i) => ({ n: i + 1, id: o.id, label: o.label })),
+            context: {
+                place: placeLabel,
+                pendingLabel: pending?.label || pending?.catLabel || null,
+                items: items.map((it) => ({ label: it.label, kg: it.weight })),
+            },
+        };
+    };
+
+    // `raw` is the phone's own (offline) transcript; `audio` the recorded
+    // answer. Online, the audio is transcribed in the cloud knowing what this
+    // screen asks — far fewer misheard words — and the phone's transcript is
+    // the fallback.
+    const handleUtterance = async (raw, audio = null) => {
+        let text = String(raw || '').trim();
+        let cloudCmd = '';
         setMicText('');
-        setHeard(text);
+        if (audio) {
+            setInterpreting(true);
+            const r = await transcribeWithCloud({ audio, ...screenContext() });
+            setInterpreting(false);
+            if (r?.error) {
+                voice.logEvent?.(`cloud STT failed, using phone: ${r.error}`);
+            } else if (r) {
+                voice.logEvent?.(`cloud heard "${r.transcript}" → "${r.command}" (${r.confidence.toFixed(2)}) · phone heard "${text}"`);
+                if (r.transcript) text = r.transcript.trim();
+                if (r.command && r.confidence >= 0.3) cloudCmd = r.command;
+            }
+        }
+        if (!text && !cloudCmd) {
+            handleNoResult('empty');
+            return;
+        }
+        setHeard(text || cloudCmd);
 
         if (readOutRef.current) {
-            handleReadOutResponse(text);
+            handleReadOutResponse(cloudCmd || text);
             return;
         }
 
@@ -493,29 +566,20 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             return;
         }
 
+        // The cloud already worked out what they meant.
+        if (cloudCmd) {
+            setHeard(`“${text}”  →  ${cloudCmd}`);
+            routeToPhase(cloudCmd);
+            return;
+        }
+
         // Ambiguous for the local parser — ask the LLM (needs connectivity;
         // falls back to the phase handler's "say the number" prompt otherwise).
         setInterpreting(true);
         voice.logEvent?.(`LLM ? "${text}"`);
         let handled = false;
         try {
-            const opts =
-                phase === 'client' ? clientOptions
-                    : phase === 'location' ? locationOptions
-                        : phase === 'category' ? categoryOptions
-                            : phase === 'subcategory' ? subOptions
-                                : [];
-            const r = await interpretWithLLM({
-                transcript: text,
-                phase,
-                language: VOICE_LANG,
-                options: opts.map((o, i) => ({ n: i + 1, id: o.id, label: o.label })),
-                context: {
-                    place: placeLabel,
-                    pendingLabel: pending?.label || pending?.catLabel || null,
-                    items: items.map((it) => ({ label: it.label, kg: it.weight })),
-                },
-            });
+            const r = await interpretWithLLM({ transcript: text, ...screenContext() });
             if (!r) {
                 voice.logEvent?.('LLM: no reply (offline / not deployed / timeout)');
             } else if (!r.command) {

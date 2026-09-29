@@ -127,7 +127,8 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
     const lastFinal = useRef({ t: '', at: 0 });
     const speakIdRef = useRef(0); // bumped per line; a stopped line's callbacks are ignored
     const bargeIdRef = useRef(0); // native barge-in listener for the current line (0 = none)
-    const callLineRef = useRef(null); // line spoken on the call path: { id, onStart, onDone }
+    const answerIdRef = useRef(0); // native answer listener (0 = none)
+    const callLineRef = useRef(null); // line spoken on the call path: { id, onStart, onDone, onProgress }
 
     const onTranscriptRef = useRef(onTranscript);
     const onNoResultRef = useRef(onNoResult);
@@ -299,23 +300,46 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                 set('listening');
             }),
             // Their sentence, recognized after Monte stopped.
-            VoiceDuplex.addListener('onBargeInResult', ({ id, text }) => {
+            VoiceDuplex.addListener('onBargeInResult', ({ id, text, audio }) => {
                 if (id !== bargeIdRef.current) return;
                 bargeIdRef.current = 0;
                 const t = String(text || '').trim();
                 log(`result (interrupt): "${t}"`);
                 set('idle');
-                if (t) {
+                if (t || audio) {
                     gotResultRef.current = true;
-                    onTranscriptRef.current?.(t);
+                    onTranscriptRef.current?.(t, audio || null);
                 } else {
                     onNoResultRef.current?.('timeout');
                 }
             }),
             VoiceDuplex.addListener('onBargeInLog', ({ text }) => log(text)),
+            // The worker's answer after Monte finished (see listen).
+            VoiceDuplex.addListener('onListenPartial', ({ id, text }) => {
+                if (id === answerIdRef.current && text) setPartial(text);
+            }),
+            VoiceDuplex.addListener('onListenResult', ({ id, text, audio }) => {
+                if (id !== answerIdRef.current) return;
+                answerIdRef.current = 0;
+                listeningRef.current = false;
+                setPartial('');
+                set('idle');
+                const t = String(text || '').trim();
+                log(`result: "${t}"${audio ? ' (+audio)' : ''}`);
+                if (speakingRef.current) return;
+                if (t || audio) {
+                    gotResultRef.current = true;
+                    onTranscriptRef.current?.(t, audio || null);
+                } else {
+                    onNoResultRef.current?.('timeout');
+                }
+            }),
             // Monte's voice on the call path (see speak).
             VoiceDuplex.addListener('onCallSpeechStart', ({ id }) => {
                 if (callLineRef.current?.id === id) callLineRef.current.onStart();
+            }),
+            VoiceDuplex.addListener('onCallSpeechRange', ({ id, start }) => {
+                if (callLineRef.current?.id === id) callLineRef.current.onProgress?.(start);
             }),
             VoiceDuplex.addListener('onCallSpeechDone', ({ id }) => {
                 const line = callLineRef.current;
@@ -344,6 +368,14 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
         } catch (e) {
             /* ignore */
         }
+        if (answerIdRef.current) {
+            answerIdRef.current = 0;
+            try {
+                VoiceDuplex?.stopListening();
+            } catch (e) {
+                /* ignore */
+            }
+        }
         if (statusRef.current === 'listening') set('idle');
     };
 
@@ -357,6 +389,24 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             if (speakingRef.current) {
                 log('listen() skipped — still speaking');
                 return;
+            }
+            // Native listener: same recognizer, but also hands back the audio
+            // so the answer can be transcribed more accurately in the cloud.
+            if (VoiceDuplex?.listen) {
+                stopInternal();
+                gotResultRef.current = false;
+                listeningRef.current = true;
+                setLastError('');
+                set('listening');
+                const words = Array.isArray(grammar) && grammar.length ? JSON.stringify(grammar) : null;
+                try {
+                    answerIdRef.current = VoiceDuplex.listen(model, words, timeout);
+                    log(`listening (native, grammar ${words ? grammar.length + ' words' : 'off'})`);
+                    return;
+                } catch (e) {
+                    answerIdRef.current = 0;
+                    log(`native listen failed, using Vosk: ${e?.message || e}`);
+                }
             }
             try {
                 Vosk.stop();
@@ -379,7 +429,8 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                     onNoResultRef.current?.(String(e));
                 });
         },
-        [modelReady, set, log]
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [modelReady, set, log, model]
     );
 
     const stopListening = useCallback(() => {
@@ -390,7 +441,7 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
     }, []);
 
     const speak = useCallback(
-        (text, { onDone, bargeIn = false, grammar = null } = {}) => {
+        (text, { onDone, onProgress, bargeIn = false, grammar = null } = {}) => {
             let finished = false;
             speakIdRef.current += 1;
             const id = speakIdRef.current;
@@ -411,11 +462,7 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             }
             speakingRef.current = true;
             set('speaking');
-            try {
-                Vosk?.stop();
-            } catch (e) {
-                /* ignore */
-            }
+            stopInternal(); // Monte talks: close the mic (either recognizer)
             stopBargeIn();
             stopTts();
             const cap = Math.min(20000, 1600 + String(text).length * 75);
@@ -446,7 +493,7 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             // canceller removes Monte from the mic; as ordinary media Monte is
             // as loud in the mic as the worker and can't be interrupted.
             if (bargeIn && VoiceDuplex?.speakOnCall && modelReady) {
-                callLineRef.current = { id, onStart: startBargeIn, onDone: wrap };
+                callLineRef.current = { id, onStart: startBargeIn, onDone: wrap, onProgress };
                 try {
                     VoiceDuplex.speakOnCall(String(text), ttsLang, id);
                     return;
@@ -490,11 +537,8 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
 
     useEffect(
         () => () => {
-            try {
-                Vosk?.stop();
-            } catch (e) {
-                /* ignore */
-            }
+            stopInternal();
+            stopBargeIn();
             stopTts(); // also leaves call-audio mode if Monte was on the call path
         },
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -516,6 +560,8 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
         diag,
         loadElapsed,
         available: !!Vosk,
+        // Monte can be interrupted by voice (call-path voice + barge-in listener)
+        canBargeIn: !!VoiceDuplex?.speakOnCall && modelReady,
         modelReady,
         ttsAvailable: !!Speech,
         listening: status === 'listening',
