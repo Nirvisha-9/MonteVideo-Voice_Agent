@@ -43,7 +43,51 @@ class VoiceDuplexModule : Module() {
       "onEchoTestStatus", "onBargeInSpeech", "onBargeInResult", "onBargeInLog",
       "onCallSpeechStart", "onCallSpeechDone", "onCallSpeechRange",
       "onListenPartial", "onListenResult",
+      "onStreamState", "onStreamMessage", "onStreamBargeIn",
     )
+
+    // One live mic session for the whole collection — see StreamSession.
+    Function("startStream") { url: String, authorization: String, marginDb: Double ->
+      stream?.stop()
+      val id = ++streamId
+      callSpeaker.hold(true)
+      stream = StreamSession(
+        url,
+        authorization,
+        marginDb,
+        onState = { state, reason ->
+          Log.i(TAG, "stream $state ${reason ?: ""}")
+          if (state != "open" && id == streamId) {
+            stream = null
+            speaker?.hold(false)
+          }
+          sendEvent("onStreamState", mapOf("id" to id, "state" to state, "reason" to reason))
+        },
+        onMessage = { json -> sendEvent("onStreamMessage", mapOf("id" to id, "json" to json)) },
+        onBargeIn = {
+          // tell the app first, so Monte's "stopped" isn't taken for "finished"
+          sendEvent("onStreamBargeIn", mapOf("id" to id))
+          speaker?.stop(holdMode = true)
+        },
+        onLog = { line -> Log.i(TAG, line); sendEvent("onBargeInLog", mapOf("text" to line)) },
+      ).also { it.start() }
+      id
+    }
+
+    Function("stopStream") {
+      stream?.stop()
+      stream = null
+      speaker?.hold(false)
+    }
+
+    // Monte's turn: the session stops streaming until the line is over.
+    Function("streamSpeakBegin") { id: Int, bargeIn: Boolean ->
+      stream?.speakBegin(id, bargeIn)
+    }
+
+    Function("streamSpeakEnd") { id: Int ->
+      stream?.speakEnded(id)
+    }
 
     // The worker's answer after Monte finishes — see AnswerListener.
     Function("listen") { modelName: String, grammar: String?, timeoutMs: Int ->
@@ -76,6 +120,7 @@ class VoiceDuplexModule : Module() {
     }
 
     OnDestroy {
+      stream?.stop()
       bargeIn?.stop()
       answer?.stop()
       speaker?.shutdown()
@@ -139,11 +184,14 @@ class VoiceDuplexModule : Module() {
   private val callSpeaker: CallSpeaker
     get() = speaker ?: CallSpeaker(
       context,
-      onStart = { id -> sendEvent("onCallSpeechStart", mapOf("id" to id)) },
+      onStart = { id -> stream?.speakStarted(id); sendEvent("onCallSpeechStart", mapOf("id" to id)) },
       onRange = { id, start -> sendEvent("onCallSpeechRange", mapOf("id" to id, "start" to start)) },
-      onDone = { id, stopped -> sendEvent("onCallSpeechDone", mapOf("id" to id, "stopped" to stopped)) },
+      onDone = { id, stopped -> stream?.speakEnded(id); sendEvent("onCallSpeechDone", mapOf("id" to id, "stopped" to stopped)) },
     ).also { speaker = it }
   private var bargeInId = 0
+
+  @Volatile private var stream: StreamSession? = null
+  private var streamId = 0
 
   // react-native-vosk unpacks bundled models to <external files>/models/<name>
   private fun modelDir(name: String): String =

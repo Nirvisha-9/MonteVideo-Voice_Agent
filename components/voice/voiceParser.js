@@ -25,6 +25,12 @@ const TENS = {
     treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70,
     ochenta: 80, noventa: 90,
 };
+const HUNDREDS = {
+    doscientos: 200, doscientas: 200, trescientos: 300, trescientas: 300,
+    cuatrocientos: 400, cuatrocientas: 400, quinientos: 500, quinientas: 500,
+    seiscientos: 600, seiscientas: 600, setecientos: 700, setecientas: 700,
+    ochocientos: 800, ochocientas: 800, novecientos: 900, novecientas: 900,
+};
 const ORDINALS = {
     first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7,
     eighth: 8, ninth: 9,
@@ -55,6 +61,7 @@ function scanInt(arr) {
         if (w in TENS) total = (total || 0) + TENS[w];
         else if (w in UNITS) total = (total || 0) + UNITS[w];
         else if (w in ORDINALS) total = (total || 0) + ORDINALS[w];
+        else if (w in HUNDREDS) total = (total || 0) + HUNDREDS[w];
         else if ((w === 'hundred' || w === 'cien' || w === 'ciento') && total != null) total *= 100;
         else if (w === 'cien' || w === 'ciento') total = 100;
     }
@@ -63,8 +70,22 @@ function scanInt(arr) {
 
 // "twenty five" · "fifteen" · "17" · "17.5" · "fifteen point five" ·
 // "fifteen and a half" · "a quarter" · "point five"  -> number | null
+// The worker corrected themselves: what follows the last of these is the answer.
+const CORRECTION = /\b(?:no|perdon|digo|mejor dicho|me equivoque|quise decir|actually|sorry|i mean|wait|scratch that)\b/;
+
 export function parseNumber(text) {
     const n = normalize(text);
+
+    // "quince, no perdon, diecisiete" -> 17 (not 15 + 17)
+    const said = n.split(CORRECTION);
+    if (said.length > 1) {
+        const last = parseNumber(said[said.length - 1]);
+        if (last != null) return last;
+    }
+
+    // digits around a spoken separator: "15 coma 5", "15 point 5"
+    const mixed = n.match(/(\d+)\s+(?:point|dot|decimal|coma|comma|punto)\s+(\d+)/);
+    if (mixed) return parseFloat(`${mixed[1]}.${mixed[2]}`);
 
     // plain digits: "15", "15.5", "15,5"
     const digit = n.match(/(\d+(?:[.,]\d+)?)/);

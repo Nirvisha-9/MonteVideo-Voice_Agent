@@ -14,7 +14,7 @@ import Listening from './Listening';
 import useSpeech from './useSpeech';
 import VoiceTest from './VoiceTest';
 import buildGrammar from './voiceGrammar';
-import { interpretWithLLM, transcribeWithCloud } from './llmInterpreter';
+import { chooseWithJev, interpretWithLLM, reviseWithLLM, transcribeWithCloud } from './llmInterpreter';
 import { getStrings } from './voiceStrings';
 import {
     getCategories,
@@ -38,6 +38,13 @@ const WAKE_VARIANTS = ['monte', 'monty', 'montey', 'montie', 'monta', 'mounte', 
 
 const MODEL_FOR = { en: 'model-en-en', es: 'model-es-es' };
 
+// Option scoring (Jev): how sure it must be of a pick.
+const PICK_ACCEPT = 0.67; // select without asking
+const PICK_CONFIRM = 0.5; // select, and ask the worker to confirm; below: ask again
+
+// A weight is shown this long, then saved without asking — time to correct it.
+const WEIGHT_SAVE_MS = 1000;
+
 /* ------------------------------------------------------------------ helpers */
 
 const fmt = (n) => {
@@ -58,6 +65,37 @@ const itemsSentence = (items, lang) => {
     return items.map((i) => `${i.label}, ${fmt(i.weight)} ${unit}`).join('; ');
 };
 
+// Firestore Timestamp · { seconds } · Date · string
+const toDate = (ts) => {
+    if (ts?.toDate) return ts.toDate();
+    if (ts?.seconds !== undefined) return new Date(ts.seconds * 1000);
+    return new Date(ts);
+};
+
+// The collections recorded at a location, as options named by their date:
+// "Monday, October 5, 2026 (today)". The same list the manual flow's date
+// picker shows.
+const buildDateOptions = (collections, locationId, lang) => {
+    const locale = lang === 'es' ? 'es-UY' : 'en-US';
+    const dayKey = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const today = dayKey(new Date());
+    const rows = (Array.isArray(collections) ? collections : [])
+        .filter((c) => c?.location && locationId != null && String(c.location) === String(locationId))
+        .map((c) => ({ raw: c, at: toDate(c.timeStamp) }))
+        .filter((r) => !Number.isNaN(r.at.getTime()));
+    return rows.map((r, i) => {
+        let label = r.at.toLocaleDateString(locale, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+        const ago = Math.round((today - dayKey(r.at)) / 86400000);
+        if (ago === 0) label += lang === 'es' ? ' (hoy)' : ' (today)';
+        if (ago === 1) label += lang === 'es' ? ' (ayer)' : ' (yesterday)';
+        // two collections on one day: tell them apart by the time
+        if (rows.some((o) => o !== r && dayKey(o.at) === dayKey(r.at))) {
+            label += `, ${r.at.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`;
+        }
+        return { id: r.raw.id ?? `date-${i}`, label, raw: r.raw };
+    });
+};
+
 const totalKg = (items) => items.reduce((s, i) => s + (Number(i.weight) || 0), 0);
 
 /* ------------------------------------------------------------------ screen  */
@@ -72,10 +110,21 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const [clients, setClients] = useState([]);
     const [selectedClient, setSelectedClient] = useState(null);
     const [selectedLocation, setSelectedLocation] = useState(null);
+    // the client's collections still to classify (their dates are the options
+    // of the date step), and the one picked
+    const [clientCollections, setClientCollections] = useState([]);
+    const collectionsRef = useRef(Promise.resolve([]));
+    const [selectedCollection, setSelectedCollection] = useState(null);
+
+    const dateOptions = useMemo(
+        () => buildDateOptions(clientCollections, selectedLocation?.id, VOICE_LANG),
+        [clientCollections, selectedLocation, VOICE_LANG]
+    );
+    const selectedDate = dateOptions.find((o) => o.raw === selectedCollection)?.label || '';
 
     const placeLabel =
         selectedClient && selectedLocation
-            ? `${selectedClient.client_name}, ${selectedLocation.name}`
+            ? `${selectedClient.client_name}, ${selectedLocation.name}${selectedDate ? `, ${selectedDate}` : ''}`
             : `${VOICE_CONTEXT.client}, ${VOICE_CONTEXT.location}`;
 
     const [phase, setPhase] = useState('loadingctx');
@@ -94,6 +143,18 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const [redoAsking, setRedoAsking] = useState(false);
     const [redoAllConfirm, setRedoAllConfirm] = useState(false);
     const [editTargetId, setEditTargetId] = useState(null);
+    // a saved item being corrected from the summary: { subId, weight } — its
+    // new sub-type is being asked for
+    const [revising, setRevising] = useState(null);
+
+    const phaseRef = useRef(phase);
+    phaseRef.current = phase;
+    const saveTimerRef = useRef(null);
+    const cancelAutoSave = () => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+    };
+    useEffect(() => cancelAutoSave, []);
 
     const scrollRef = useRef(null);
 
@@ -168,9 +229,29 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         }
     };
 
+    // Names the worker is likely to say — the live transcription is primed
+    // with them when the session connects.
+    const liveKeyterms = useMemo(
+        () => [
+            'kilos',
+            AGENT_NAME,
+            ...categoryOptions.map((o) => o.label),
+            ...clients.map((c) => c.client_name),
+            ...clients.flatMap((c) => (Array.isArray(c.locations) ? c.locations.map((l) => l.name) : [])),
+            ...Object.values(VOICE_SUBCATEGORIES).flatMap((subs) => subs.map((s) => s.label)),
+        ],
+        [categoryOptions, clients]
+    );
+
     const voice = useSpeech({
         lang: VOICE_LANG,
         model: VOICE_MODEL,
+        // One mic session from the first question until the collection is
+        // submitted (the client list is loaded first, for its names).
+        live: {
+            enabled: voiceOn && !showTest && phase !== 'loadingctx' && phase !== 'done',
+            keyterms: liveKeyterms,
+        },
         onTranscript: (text, audio) => {
             noResultRef.current = 0;
             handleUtteranceRef.current(text, audio);
@@ -189,6 +270,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         if (agentLine) parts.push(agentLine);
         else if (phase === 'client') parts.push(t.sayClient);
         else if (phase === 'location') parts.push(t.sayLocation);
+        else if (phase === 'date') parts.push(t.sayDate);
         else if (phase === 'addbags') parts.push(t.sayAddBags);
         else if (phase === 'category') parts.push(t.sayCategory);
         else if (phase === 'subcategory') parts.push(t.saySubcategory);
@@ -397,6 +479,29 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         bumpScroll();
     };
 
+    const goToDate = (line) => {
+        setPhase('date');
+        setQuestion(t.qDateAt(selectedLocation?.name ?? ''));
+        setAgentLine(line || '');
+        resetSelection();
+        bumpScroll();
+    };
+
+    // Same query as the manual flow's date picker. Never rejects.
+    const loadCollections = async (clientId) => {
+        let list = [];
+        try {
+            // lazy require, like the client list
+            // eslint-disable-next-line global-require
+            const { FetchCollectionsByClient } = require('../../services/collectionsService');
+            list = (await FetchCollectionsByClient(clientId, { unclassifiedOnly: true })) || [];
+        } catch (e) {
+            list = [];
+        }
+        setClientCollections(list);
+        return list;
+    };
+
     const goToCategory = (line) => {
         setPhase('category');
         setQuestion(t.qCategory);
@@ -423,6 +528,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         setRedoAsking(false);
         setRedoAllConfirm(false);
         setEditTargetId(null);
+        setRevising(null);
         bumpScroll();
     };
 
@@ -440,6 +546,8 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
                 return handleSelection(text, clientOptions, 'client');
             case 'location':
                 return handleSelection(text, locationOptions, 'location');
+            case 'date':
+                return handleSelection(text, dateOptions, 'date');
             case 'addbags':
                 return handleAddBags(text);
             case 'category':
@@ -457,6 +565,71 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             default:
                 return undefined;
         }
+    };
+
+    // The option list this screen is asking the worker to pick from, if any.
+    const pickScreen = () => {
+        switch (phase) {
+            case 'client':
+                return { opts: clientOptions, typeLabel: 'client' };
+            case 'location':
+                return { opts: locationOptions, typeLabel: 'location' };
+            case 'date':
+                return { opts: dateOptions, typeLabel: 'date' };
+            case 'addbags':
+                return {
+                    opts: [{ id: 'yes', label: t.chipYes }, { id: 'no', label: t.chipNot }],
+                    typeLabel: 'addbags',
+                };
+            case 'category':
+                return { opts: categoryOptions, typeLabel: 'category' };
+            case 'subcategory':
+                return { opts: subOptions, typeLabel: 'sub-category' };
+            default:
+                return null;
+        }
+    };
+
+    // "two" · "number 2" · "el dos" — an option number and nothing else.
+    const isPlainNumber = (text, opts) => {
+        const n = normalize(text);
+        const num = parseNumber(n);
+        return num != null && Number.isInteger(num) && num >= 1 && num <= opts.length &&
+            /^(number |option |opcion |numero |el |la )?[a-z0-9]+$/.test(n);
+    };
+
+    // Act on Jev's answer. Returns false when it isn't one to act on.
+    const applyPick = (r, { opts, typeLabel }, text) => {
+        if (r.confidence >= PICK_CONFIRM && r.control === 'back') {
+            goBack();
+            return true;
+        }
+        if (typeLabel === 'addbags') {
+            // yes / not now: nothing to confirm, and the parser asks again
+            const answer = r.confidence >= PICK_CONFIRM && r.index >= 0 ? opts[r.index] : null;
+            if (!answer) return false;
+            if (answer.id === 'yes') goToCategory(t.openingCategories);
+            else setAgentLine(t.noProblemSayYes);
+            return true;
+        }
+        if (r.confidence >= PICK_CONFIRM && r.control === 'read') {
+            startReadOut(opts, typeLabel);
+            return true;
+        }
+        const option = r.index >= 0 ? opts[r.index] : null;
+        if (!option || r.confidence < PICK_CONFIRM) {
+            setAgentLine(t.didntGetSayNumber);
+            return true;
+        }
+        setHeard(`“${text}”  →  ${option.label} (${Math.round(r.confidence * 100)}%)`);
+        if (r.confidence >= PICK_ACCEPT) {
+            confirmSelection(opts, typeLabel, option);
+            return true;
+        }
+        setSelection({ index: r.index, option });
+        setConfirming(true);
+        setAgentLine(t.confirmSel(option.label));
+        return true;
     };
 
     // "monte" (alone, or "hey monte", "monte are you there") on ANY screen just
@@ -478,6 +651,9 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
                     (confirming && (isAffirmative(text) || isNegative(text)));
             case 'location':
                 return !!matchOption(text, locationOptions) || wantsGoBack(text) || wantsReadOut(text) ||
+                    (confirming && (isAffirmative(text) || isNegative(text)));
+            case 'date':
+                return !!matchOption(text, dateOptions) || wantsGoBack(text) || wantsReadOut(text) ||
                     (confirming && (isAffirmative(text) || isNegative(text)));
             case 'addbags':
                 return isAffirmative(text) || isNegative(text) || wantsGoBack(text) || /\badd bags\b/.test(n);
@@ -506,6 +682,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         const opts = ro ? ro.opts
             : phase === 'client' ? clientOptions
                 : phase === 'location' ? locationOptions
+                    : phase === 'date' ? dateOptions
                     : phase === 'category' ? categoryOptions
                         : phase === 'subcategory' ? subOptions
                             : [];
@@ -561,6 +738,33 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             return;
         }
 
+        // Option screens: Jev picks the closest option and says how sure it
+        // is. A plain option number, and the yes/no to a pick being confirmed,
+        // stay with the parser below — which also takes over when Jev can't
+        // be reached.
+        const pick = pickScreen();
+        // (a plain yes / no to "add bags?" needs no scoring either)
+        const plainAnswer = pick && (isPlainNumber(text, pick.opts) || (phase === 'addbags' && localCanHandle(text)));
+        if (pick && !confirming && !plainAnswer) {
+            setInterpreting(true);
+            const r = await chooseWithJev({
+                transcript: text,
+                phase,
+                language: VOICE_LANG,
+                options: pick.opts.map((o, i) => ({ n: i + 1, id: o.id, label: o.label })),
+            });
+            setInterpreting(false);
+            if (r?.error) {
+                voice.logEvent?.(`Jev unavailable, using phone: ${r.error}`);
+            } else if (r) {
+                const seen = r.top.map((x) => `${x.label} ${x.p}`).join(' · ');
+                voice.logEvent?.(`Jev → ${r.label || r.control || 'none'} (${r.confidence.toFixed(2)})  [${seen}]`);
+                if (applyPick(r, pick, text)) return;
+            }
+        }
+
+        if (phase === 'summary' && (await tryRevise(text))) return;
+
         if (localCanHandle(text)) {
             routeToPhase(text);
             return;
@@ -599,6 +803,95 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         if (!handled) routeToPhase(text);
     };
     handleUtteranceRef.current = handleUtterance;
+
+    // Summary screen: "not cardboard, plastics — and seven kilos" corrects a
+    // saved item. Returns true when the answer was a correction (and handled).
+    const tryRevise = async (text) => {
+        if (!items.length || submitAsking || redoAsking || redoAllConfirm) return false;
+        // A short answer the parser knows ("submit", "add another", "yes") is
+        // a command. A sentence is read as a possible correction first: the
+        // parser would act on any "not" / "correct" / "remove" inside it.
+        const short = normalize(text).split(' ').filter(Boolean).length <= 3;
+        if (short && (isAffirmative(text) || isNegative(text) || wantsGoBack(text))) return false;
+        if (short && !['unknown', 'edit'].includes(parseSummaryCommand(text).action)) return false;
+
+        setInterpreting(true);
+        const r = await reviseWithLLM({
+            transcript: text,
+            language: VOICE_LANG,
+            items: items.map((it) => ({ label: it.label, kg: it.weight })),
+            catalog: CATS.map((c) => ({ id: c.id, label: c.label, subs: VOICE_SUBCATEGORIES[c.id] || [] })),
+        });
+        setInterpreting(false);
+        if (!r) {
+            voice.logEvent?.('revise: no reply (offline / not deployed / timeout)');
+            return false;
+        }
+        voice.logEvent?.(`revise → ${r.action} item "${r.item}" cat "${r.category}" sub "${r.subcategory}" ${r.weight} kg — ${r.note}`);
+        if (r.action !== 'revise') return false;
+
+        const cat = CATS.find((c) => c.id === r.category) || null;
+        const weight = r.weight > 0 ? r.weight : null;
+        if (!cat && weight == null) return false; // nothing to change
+
+        const target = findItem(r.item) || (items.length === 1 ? items[0] : null);
+        if (!target) {
+            setAgentLine(t.whichEdit);
+            return true;
+        }
+        const newWeight = weight ?? target.weight;
+        if (!cat) {
+            applyRevision(target.subId, { ...target, weight: newWeight });
+            return true;
+        }
+        const sub = cat.hasSub ? (VOICE_SUBCATEGORIES[cat.id] || []).find((s) => s.id === r.subcategory) : cat;
+        if (sub) {
+            applyRevision(target.subId, {
+                catId: cat.id,
+                catLabel: cat.label,
+                typeWord: cat.typeWord,
+                hasSub: cat.hasSub,
+                subId: sub.id,
+                subLabel: sub.label,
+                label: sub.label,
+                weight: newWeight,
+            });
+            return true;
+        }
+        // the new material has sub-types and none was named: ask, then come back
+        setRevising({ subId: target.subId, weight: newWeight });
+        setPending({ catId: cat.id, catLabel: cat.label, typeWord: cat.typeWord, hasSub: true });
+        setPhase('subcategory');
+        setQuestion(t.qTypeOf(cat.typeWord));
+        setAgentLine(t.openingSub(cat.label));
+        resetSelection();
+        bumpScroll();
+        return true;
+    };
+
+    // Replace the saved item `subId` with `entry` and show the summary again.
+    const applyRevision = (subId, entry) => {
+        setItems((prev) => {
+            const at = prev.findIndex((i) => i.subId === subId);
+            let next = prev.filter((i) => i.subId !== subId);
+            const dup = next.findIndex((i) => i.subId === entry.subId);
+            if (dup !== -1) {
+                // that material is already on the list: it becomes the
+                // corrected line (the weight is replaced, not added)
+                next = next.map((i, k) => (k === dup ? { ...i, weight: entry.weight } : i));
+            } else {
+                next.splice(at === -1 ? next.length : at, 0, entry);
+            }
+            setPending(null);
+            setRevising(null);
+            setConfirming(false);
+            setPhase('summary');
+            setQuestion(t.qSummary);
+            setAgentLine(t.savedSummary(itemsSentence(next, VOICE_LANG), fmt(totalKg(next))));
+            bumpScroll();
+            return next;
+        });
+    };
 
     const toggleVoice = () => {
         cancelReadOut();
@@ -656,7 +949,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
 
     const typeLabelWord = (typeLabel) => {
         if (VOICE_LANG !== 'es') return typeLabel;
-        return { client: 'cliente', location: 'ubicación', category: 'categoría', 'sub-category': 'subcategoría' }[typeLabel] || typeLabel;
+        return { client: 'cliente', location: 'ubicación', date: 'fecha', category: 'categoría', 'sub-category': 'subcategoría' }[typeLabel] || typeLabel;
     };
 
     const handleSelection = (text, opts, typeLabel) => {
@@ -701,12 +994,14 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         return false;
     };
 
-    const confirmSelection = (opts, typeLabel) => {
-        const chosen = selection.option;
+    const confirmSelection = (opts, typeLabel, chosen = selection.option) => {
         if (typeLabel === 'client') {
             const c = chosen.raw;
             setSelectedClient(c);
             setSelectedLocation(null);
+            setSelectedCollection(null);
+            setClientCollections([]);
+            collectionsRef.current = loadCollections(c?.id); // ready by the date step
             resetSelection();
             if (Array.isArray(c?.locations) && c.locations.length) {
                 setPhase('location');
@@ -722,13 +1017,41 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         }
         if (typeLabel === 'location') {
             const l = chosen.raw;
+            const place = `${selectedClient?.client_name ?? ''}, ${l.name}`;
             setSelectedLocation(l);
+            setSelectedCollection(null);
             setItems([]);
             setPending(null);
             resetSelection();
+            // Next: which of the collections at this location (by date). One
+            // collection needs no question; none leaves the date unset.
+            setInterpreting(true);
+            collectionsRef.current.then((cols) => {
+                setInterpreting(false);
+                const dates = buildDateOptions(cols, l.id, VOICE_LANG);
+                if (dates.length > 1) {
+                    setPhase('date');
+                    setQuestion(t.qDateAt(l.name));
+                    setAgentLine(t.locationSet(l.name));
+                } else {
+                    const only = dates[0] || null;
+                    setSelectedCollection(only?.raw || null);
+                    setPhase('addbags');
+                    setQuestion(t.qAddBagsAt(only ? `${place}, ${only.label}` : place));
+                    setAgentLine(only ? t.dateOnly(l.name, only.label) : t.noDates(l.name));
+                }
+                bumpScroll();
+            });
+            return;
+        }
+        if (typeLabel === 'date') {
+            setSelectedCollection(chosen.raw);
+            resetSelection();
             setPhase('addbags');
-            setQuestion(t.qAddBagsAt(`${selectedClient?.client_name ?? ''}, ${l.name}`));
-            setAgentLine(t.locationSet(l.name));
+            setQuestion(
+                t.qAddBagsAt(`${selectedClient?.client_name ?? ''}, ${selectedLocation?.name ?? ''}, ${chosen.label}`)
+            );
+            setAgentLine(t.dateSet(chosen.label));
             bumpScroll();
             return;
         }
@@ -761,6 +1084,14 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
                 resetSelection();
                 bumpScroll();
             }
+        } else if (revising) {
+            applyRevision(revising.subId, {
+                ...pending,
+                subId: chosen.id,
+                subLabel: chosen.label,
+                label: chosen.label,
+                weight: revising.weight,
+            });
         } else {
             setPending((p) => ({
                 ...p,
@@ -779,25 +1110,30 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const handleWeight = (text) => {
         if (wantsGoBack(text)) return goBack();
 
+        cancelAutoSave();
         const num = parseNumber(text);
         if (num != null && num > 0) {
-            setPending((p) => ({ ...p, weight: num }));
-            setConfirming(true);
-            setAgentLine(t.confirmWeight(fmt(num), pending?.label));
+            // show it, then save and move on; another number said meanwhile
+            // replaces it and restarts the wait
+            const entry = { ...pending, weight: num };
+            setPending(entry);
+            saveTimerRef.current = setTimeout(() => {
+                saveTimerRef.current = null;
+                if (phaseRef.current === 'weight') saveItem(entry);
+            }, WEIGHT_SAVE_MS);
             return;
         }
-        if (confirming && isAffirmative(text)) return saveItem();
-        if (confirming && isNegative(text)) {
+        if (pending?.weight != null && isAffirmative(text)) return saveItem();
+        if (pending?.weight != null && isNegative(text)) {
             setPending((p) => ({ ...p, weight: undefined }));
-            setConfirming(false);
             setAgentLine(t.okCorrectWeight);
             return;
         }
         setAgentLine(t.tellWeightExample);
     };
 
-    const saveItem = () => {
-        const entry = { ...pending };
+    const saveItem = (saved = pending) => {
+        const entry = { ...saved };
         setItems((prev) => {
             const idx = prev.findIndex((i) => i.subId === entry.subId);
             let next;
@@ -976,12 +1312,19 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     };
 
     const goBack = () => {
+        cancelAutoSave();
+        if (revising) return goToSummary(t.goingBackSummary); // correction abandoned
         switch (phase) {
             case 'location':
                 goToClient(t.goingBackClientList);
                 return;
+            case 'date':
+                goToLocation(t.goingBackLocationList);
+                return;
             case 'addbags':
-                if (selectedClient && locationOptions.length) {
+                if (selectedClient && dateOptions.length > 1) {
+                    goToDate(t.goingBackDateList);
+                } else if (selectedClient && locationOptions.length) {
                     goToLocation(t.goingBackLocationList);
                 } else if (clientOptions.length) {
                     goToClient(t.goingBackClientList);
@@ -1166,6 +1509,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
 
                 {phase === 'client' && renderChips(clientOptions, 1)}
                 {phase === 'location' && renderChips(locationOptions, 1)}
+                {phase === 'date' && renderChips(dateOptions, 1)}
 
                 {phase === 'addbags' &&
                     renderChips(

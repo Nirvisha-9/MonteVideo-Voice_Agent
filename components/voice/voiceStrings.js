@@ -6,6 +6,7 @@ const EN = {
     pill: {
         client: 'SELECT CLIENT',
         location: 'SELECT LOCATION',
+        date: 'SELECT DATE',
         addbags: 'STEP 1 OF 5 · ADD BAGS',
         category: 'STEP 2 OF 5 · CATEGORY',
         subcategory: 'STEP 3 OF 5 · SUB-CATEGORY',
@@ -16,6 +17,7 @@ const EN = {
     hint: {
         client: 'Try: "one"  ·  the client name',
         location: 'Try: "one"  ·  the location name  ·  "go back"',
+        date: 'Try: "one"  ·  "today"  ·  "Monday"  ·  "October fifth"  ·  "go back"',
         addbags: 'Try: "yes, please add bags"  ·  "go back"',
         category: 'Try: "two"  ·  "plastics"  ·  "read out the options"  ·  "go back"',
         subcategory: 'Try: "three"  ·  "PET Blanco"  ·  "go back"',
@@ -27,6 +29,7 @@ const EN = {
     // questions
     qClient: 'Which client is this collection for?',
     qLocationAt: (c) => `Which location at ${c}?`,
+    qDateAt: (l) => `Which collection date at ${l}?`,
     qCategory: 'Which category are you sorting?',
     qTypeOf: (w) => `Which type of ${w} is it?`,
     qWeightFor: (x) => `What's the weight for ${x}?`,
@@ -37,6 +40,7 @@ const EN = {
     // spoken helper lines (added when there's no agentLine)
     sayClient: 'Say the number, or the client name.',
     sayLocation: 'Say the number, or the location name.',
+    sayDate: 'Say the number, or the date.',
     sayAddBags: 'Say yes to add bags, or say go back.',
     sayCategory: 'Say the number, or the category name. You can also say "read out the options".',
     saySubcategory: 'Say the number or the name.',
@@ -57,6 +61,9 @@ const EN = {
     sorrySayYes: `Sorry, I didn't catch that. Say "yes" to add bags, or "go back".`,
     clientSet: (c) => `Client set to ${c}.`,
     locationSet: (l) => `Location set to ${l}.`,
+    dateSet: (d) => `Date set to ${d}.`,
+    dateOnly: (l, d) => `Location set to ${l}. There is one collection there, from ${d}.`,
+    noDates: (l) => `Location set to ${l}. There are no collections waiting to be classified there, so no date is set.`,
     openingSub: (c) => `Opening the sub-category list for ${c}.`,
     openingWeight: (c) => `Opening the weight entry for ${c}.`,
     confirmWeight: (kg, x) => `Confirming: ${kg} kilograms of ${x}. Save and continue?`,
@@ -96,6 +103,7 @@ const EN = {
     goingBackSummary: 'Back to the summary.',
     goingBackClientList: 'Going back to the client list.',
     goingBackLocationList: 'Going back to the location list.',
+    goingBackDateList: 'Going back to the date list.',
     imListening: 'Getting the client list…',
     loadingClients: 'Loading clients…',
 
@@ -141,6 +149,7 @@ const ES = {
     pill: {
         client: 'ELEGIR CLIENTE',
         location: 'ELEGIR UBICACIÓN',
+        date: 'ELEGIR FECHA',
         addbags: 'PASO 1 DE 5 · AGREGAR BOLSAS',
         category: 'PASO 2 DE 5 · CATEGORÍA',
         subcategory: 'PASO 3 DE 5 · SUBCATEGORÍA',
@@ -151,6 +160,7 @@ const ES = {
     hint: {
         client: 'Probá: "uno"  ·  el nombre del cliente',
         location: 'Probá: "uno"  ·  el nombre de la ubicación  ·  "volver"',
+        date: 'Probá: "uno"  ·  "hoy"  ·  "lunes"  ·  "cinco de octubre"  ·  "volver"',
         addbags: 'Probá: "sí, agregar bolsas"  ·  "volver"',
         category: 'Probá: "dos"  ·  "plásticos"  ·  "lee las opciones"  ·  "volver"',
         subcategory: 'Probá: "tres"  ·  "PET Blanco"  ·  "volver"',
@@ -161,6 +171,7 @@ const ES = {
 
     qClient: '¿Para qué cliente es esta recolección?',
     qLocationAt: (c) => `¿Qué ubicación en ${c}?`,
+    qDateAt: (l) => `¿Qué fecha de recolección en ${l}?`,
     qCategory: '¿Qué categoría estás clasificando?',
     qTypeOf: (w) => `¿Qué tipo de ${w} es?`,
     qWeightFor: (x) => `¿Cuál es el peso de ${x}?`,
@@ -170,6 +181,7 @@ const ES = {
 
     sayClient: 'Decí el número o el nombre del cliente.',
     sayLocation: 'Decí el número o el nombre de la ubicación.',
+    sayDate: 'Decí el número o la fecha.',
     sayAddBags: 'Decí sí para agregar bolsas, o decí volver.',
     sayCategory: 'Decí el número o el nombre de la categoría. También podés decir "lee las opciones".',
     saySubcategory: 'Decí el número o el nombre.',
@@ -189,6 +201,9 @@ const ES = {
     sorrySayYes: 'Perdón, no te entendí. Decí "sí" para agregar bolsas, o "volver".',
     clientSet: (c) => `Cliente: ${c}.`,
     locationSet: (l) => `Ubicación: ${l}.`,
+    dateSet: (d) => `Fecha: ${d}.`,
+    dateOnly: (l, d) => `Ubicación: ${l}. Hay una sola recolección ahí, del ${d}.`,
+    noDates: (l) => `Ubicación: ${l}. No hay recolecciones pendientes de clasificar ahí, así que no se asigna fecha.`,
     openingSub: (c) => `Abriendo la lista de subcategorías de ${c}.`,
     openingWeight: (c) => `Abriendo el ingreso de peso para ${c}.`,
     confirmWeight: (kg, x) => `Confirmando: ${kg} kilogramos de ${x}. ¿Guardar y continuar?`,
@@ -228,6 +243,7 @@ const ES = {
     goingBackSummary: 'De vuelta al resumen.',
     goingBackClientList: 'Volviendo a la lista de clientes.',
     goingBackLocationList: 'Volviendo a la lista de ubicaciones.',
+    goingBackDateList: 'Volviendo a la lista de fechas.',
     imListening: 'Obteniendo la lista de clientes…',
     loadingClients: 'Cargando clientes…',
 

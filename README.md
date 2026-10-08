@@ -2,9 +2,13 @@
 
 ## Voice Agent (Clasificar → Voice Agent)
 
-Hands-free, **offline** classification flow. Speech-to-text runs fully on-device
-via [Vosk](https://alphacephei.com/vosk/) — no Google/OEM speech services, no
-network, no API keys. Text-to-speech uses `expo-speech` (device TTS).
+Hands-free classification flow. Online, the microphone is streamed live to
+Deepgram for the whole collection; offline, speech-to-text runs on-device via
+[Vosk](https://alphacephei.com/vosk/). Text-to-speech uses the device's own
+voice.
+
+**Full description of the speech pipeline, setup, secrets and open issues:
+[docs/VOICE_AGENT.md](docs/VOICE_AGENT.md).**
 
 ### First-time setup
 
@@ -43,17 +47,22 @@ selection — nothing about the offline flow regresses.
   `functions/.env` (gitignored), never in the app.
 - `components/voice/llmInterpreter.js` — client side; any failure resolves to
   `null` and the local flow continues.
-- Default provider: **Google Gemini Flash** (free tier, strong Spanish). Any
-  OpenAI-compatible provider works — see `functions/.env`.
+- Model: **Claude Opus 5.5** at low effort (structured JSON output).
+
+## Cloud speech-to-text
+
+Online, the worker's recorded answer is also sent to the `transcribe` Cloud
+Function, which transcribes it with **Deepgram** (`nova-3`), primed with the
+current screen's option names. Its transcript replaces Vosk's; offline, on a
+timeout or on any error the app keeps the on-device Vosk transcript.
 
 ### Setup
 
 ```bash
 cd functions && npm install && cd ..
 # functions/.env:
-#   LLM_API_KEY   = key from https://aistudio.google.com/app/apikey
-#   LLM_BASE_URL  = https://generativelanguage.googleapis.com/v1beta/openai
-#   LLM_MODEL     = gemini-2.5-flash
+#   DEEPGRAM_API_KEY = key from https://console.deepgram.com
+#   ANTHROPIC_API_KEY = key from https://platform.claude.com
 firebase deploy --only functions          # needs the Blaze plan on the project
 ```
 

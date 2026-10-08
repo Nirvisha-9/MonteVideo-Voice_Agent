@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { PermissionsAndroid, Platform } from 'react-native';
 
 /**
  * Offline voice engine for the Voice Agent.
@@ -17,12 +17,19 @@ import { Platform } from 'react-native';
  * talking over Monte it stops Monte, recognizes their sentence and pushes it to
  * `onTranscript` — the same path as a normal answer. Tapping still works too.
  *
+ * Live session: with `live.enabled` (and connectivity) the mic is opened once
+ * and streamed to Deepgram for as long as it stays enabled — see StreamSession
+ * (native) and deepgramStream.js. `listen()` then just marks the worker's turn;
+ * a complete answer is pushed to `onTranscript` like any other. Without a
+ * connection everything above still works as described, on Vosk.
+ *
  * Vosk is loaded defensively so the screen still works through the typed input
  * on a build where the native module isn't linked (Expo Go, tests).
  */
 
 // eslint-disable-next-line import/first
 import VoiceDuplex from '../../modules/voice-duplex';
+import { cleanTranscript, liveAuthorization, liveUrl } from './deepgramStream';
 
 // How far (dB) the worker's voice must rise above what's left of Monte's voice
 // in the echo-cancelled mic before Monte is interrupted.
@@ -45,6 +52,10 @@ try {
 }
 
 const MAX_EVENTS = 12;
+const LIVE_RETRY_MS = 15000; // wait before reconnecting a lost live session
+// How long the first question waits for the live session to connect. A line
+// that starts before the session is up can't be interrupted by voice.
+const LIVE_WAIT_MS = 2500;
 const MODEL_LOAD_TIMEOUT = 180000; // first launch copies ~80 MB out of the APK
 const stamp = () => {
     const d = new Date();
@@ -110,7 +121,17 @@ export function loadModelOnce(name, onLog) {
     return p;
 }
 
-export default function useSpeech({ lang = 'en', model = 'model-en-en', onTranscript, onNoResult } = {}) {
+async function micAllowed() {
+    if (Platform.OS !== 'android') return true;
+    try {
+        const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        return r === PermissionsAndroid.RESULTS.GRANTED;
+    } catch (e) {
+        return false;
+    }
+}
+
+export default function useSpeech({ lang = 'en', model = 'model-en-en', onTranscript, onNoResult, live = null } = {}) {
     const [status, setStatus] = useState(Vosk ? 'loading' : 'unavailable');
     const [partial, setPartial] = useState('');
     const [lastError, setLastError] = useState('');
@@ -130,6 +151,18 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
     const answerIdRef = useRef(0); // native answer listener (0 = none)
     const callLineRef = useRef(null); // line spoken on the call path: { id, onStart, onDone, onProgress }
 
+    // live session (mic streamed to Deepgram)
+    const liveEnabled = !!live?.enabled && !!VoiceDuplex?.startStream;
+    const [liveOn, setLiveOn] = useState(false);
+    const [liveAttempt, setLiveAttempt] = useState(0);
+    const [liveSettled, setLiveSettled] = useState(false); // connected, or gave up for now
+    const liveOnRef = useRef(false);
+    const liveIdRef = useRef(0); // native session (0 = none)
+    const liveRetryRef = useRef(false); // the last attempt failed: wait before the next
+    const utterRef = useRef(''); // settled part of the answer being spoken
+    const liveKeytermsRef = useRef([]);
+    liveKeytermsRef.current = live?.keyterms || [];
+
     const onTranscriptRef = useRef(onTranscript);
     const onNoResultRef = useRef(onNoResult);
     onTranscriptRef.current = onTranscript;
@@ -142,6 +175,8 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
         setStatus(s);
     }, []);
     const log = useCallback((line) => {
+        // eslint-disable-next-line no-console
+        if (__DEV__) console.log(`[voice] ${line}`); // adb logcat -s ReactNativeJS
         setEvents((p) => [`${stamp()}  ${line}`, ...p].slice(0, MAX_EVENTS));
     }, []);
 
@@ -168,12 +203,12 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             .then(() => {
                 if (!alive) return;
                 setModelReady(true);
-                set('idle');
+                if (statusRef.current === 'loading') set('idle');
             })
             .catch((e) => {
                 if (!alive) return;
                 setLastError(`voice model didn't load: ${e?.message || e}`);
-                set('error');
+                if (!liveOnRef.current) set('error'); // the live session doesn't need it
             });
 
         return () => {
@@ -274,6 +309,18 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                 /* ignore */
             }
         }
+        if (liveOnRef.current) VoiceDuplex.streamSpeakEnd(0); // back to the worker
+    };
+
+    // The worker finished an answer in the live session.
+    const commitLive = () => {
+        const t = utterRef.current.trim();
+        utterRef.current = '';
+        setPartial('');
+        if (!t) return;
+        log(`result (live): "${t}"`);
+        gotResultRef.current = true;
+        onTranscriptRef.current?.(t, null);
     };
 
     const stopBargeIn = () => {
@@ -347,6 +394,79 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                 callLineRef.current = null;
                 line.onDone();
             }),
+            // Live session connected / lost.
+            VoiceDuplex.addListener('onStreamState', ({ id, state, reason }) => {
+                if (id !== liveIdRef.current) return;
+                if (state === 'open') {
+                    log(`live transcription connected${speakingRef.current ? ' (Monte already speaking)' : ''}`);
+                    const wasListening = listeningRef.current;
+                    stopInternal(); // the session owns the mic now
+                    utterRef.current = '';
+                    liveRetryRef.current = false;
+                    liveOnRef.current = true;
+                    setLiveOn(true);
+                    setLiveSettled(true);
+                    setLastError('');
+                    if (speakingRef.current) {
+                        // a line that started before the session: don't transcribe Monte
+                        VoiceDuplex.streamSpeakBegin(speakIdRef.current, false);
+                    } else if (wasListening) {
+                        listeningRef.current = true;
+                        set('listening');
+                    } else if (statusRef.current === 'loading' || statusRef.current === 'error') {
+                        set('idle');
+                    }
+                    return;
+                }
+                log(`live transcription ${state}${reason ? `: ${reason}` : ''} — using offline voice`);
+                const wasListening = liveOnRef.current && listeningRef.current && !speakingRef.current;
+                liveIdRef.current = 0;
+                liveOnRef.current = false;
+                liveRetryRef.current = true;
+                utterRef.current = '';
+                setPartial('');
+                setLiveOn(false);
+                setLiveSettled(true);
+                setLiveAttempt((n) => n + 1); // reconnect after LIVE_RETRY_MS
+                if (wasListening) {
+                    listeningRef.current = false;
+                    set('idle');
+                    onNoResultRef.current?.('live-lost'); // the screen re-opens the mic, on Vosk
+                }
+            }),
+            // Deepgram's messages — see deepgramStream.js.
+            VoiceDuplex.addListener('onStreamMessage', ({ id, json }) => {
+                if (id !== liveIdRef.current || speakingRef.current) return; // Monte's turn
+                let m = null;
+                try {
+                    m = JSON.parse(json);
+                } catch (e) {
+                    return;
+                }
+                if (m.type === 'Results') {
+                    const text = cleanTranscript(m.channel?.alternatives?.[0]?.transcript);
+                    if (!m.is_final) {
+                        if (text) setPartial(`${utterRef.current} ${text}`.trim());
+                        return;
+                    }
+                    if (text) utterRef.current = `${utterRef.current} ${text}`.trim();
+                    if (m.speech_final) commitLive();
+                    else setPartial(utterRef.current);
+                } else if (m.type === 'UtteranceEnd') {
+                    commitLive();
+                }
+            }),
+            // The worker started talking over Monte (the session already stopped Monte).
+            VoiceDuplex.addListener('onStreamBargeIn', ({ id }) => {
+                if (id !== liveIdRef.current || !speakingRef.current) return;
+                log('you spoke — stopping Monte');
+                speakIdRef.current += 1; // Monte was cut off: skip its onDone
+                stopTts();
+                speakingRef.current = false;
+                utterRef.current = '';
+                listeningRef.current = true;
+                set('listening');
+            }),
         ];
         return () => {
             subs.forEach((s) => s.remove());
@@ -354,6 +474,66 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [set, log]);
+
+    /* ------------------------------------------------------- live session   */
+    useEffect(() => {
+        liveRetryRef.current = false;
+    }, [liveEnabled, lang]);
+
+    useEffect(() => {
+        if (!liveEnabled) return undefined;
+        let alive = true;
+        const retryLater = (why) => {
+            log(`live transcription unavailable (${why}) — using offline voice`);
+            liveRetryRef.current = true;
+            setLiveSettled(true);
+            setLiveAttempt((n) => n + 1);
+        };
+        // a reconnect happens in the background: the offline voice is in use
+        if (liveRetryRef.current) setLiveSettled(true);
+        const settleTimer = setTimeout(() => setLiveSettled(true), LIVE_WAIT_MS);
+        const timer = setTimeout(async () => {
+            const allowed = await micAllowed();
+            const auth = allowed ? await liveAuthorization() : null;
+            if (!alive) return;
+            if (!allowed) {
+                log('microphone permission denied');
+                setLiveSettled(true);
+                return;
+            }
+            if (!auth) {
+                retryLater('no connection or not set up');
+                return;
+            }
+            try {
+                liveIdRef.current = VoiceDuplex.startStream(
+                    liveUrl(lang, liveKeytermsRef.current), auth, BARGE_IN_MARGIN_DB
+                );
+            } catch (e) {
+                retryLater(e?.message || e);
+            }
+        }, liveRetryRef.current ? LIVE_RETRY_MS : 0);
+        return () => {
+            alive = false;
+            clearTimeout(timer);
+            clearTimeout(settleTimer);
+            setLiveSettled(false);
+            if (liveIdRef.current) {
+                liveIdRef.current = 0;
+                try {
+                    VoiceDuplex.stopStream();
+                } catch (e) {
+                    /* ignore */
+                }
+            }
+            if (liveOnRef.current) {
+                liveOnRef.current = false;
+                setLiveOn(false);
+                if (statusRef.current === 'listening') set('idle');
+            }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [liveEnabled, lang, liveAttempt]);
 
     // Load the model for the barge-in recognizer early, so the first
     // interruption isn't slow.
@@ -382,12 +562,20 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
     /* ------------------------------------------------------- controls       */
     const listen = useCallback(
         (grammar, { timeout = 30000 } = {}) => {
-            if (!Vosk || !modelReady) {
-                log(`listen() skipped — ${!Vosk ? 'no module' : 'model not ready'}`);
-                return;
-            }
             if (speakingRef.current) {
                 log('listen() skipped — still speaking');
+                return;
+            }
+            // Live session: the mic is already open and streaming.
+            if (liveOnRef.current) {
+                gotResultRef.current = false;
+                listeningRef.current = true;
+                setLastError('');
+                set('listening');
+                return;
+            }
+            if (!Vosk || !modelReady) {
+                log(`listen() skipped — ${!Vosk ? 'no module' : 'model not ready'}`);
                 return;
             }
             // Native listener: same recognizer, but also hands back the audio
@@ -452,6 +640,7 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                 // must not re-open the mic or reset the newer line's state.
                 if (id !== speakIdRef.current) return;
                 stopBargeIn(); // Monte finished without being interrupted
+                if (liveOnRef.current) VoiceDuplex.streamSpeakEnd(id); // back to the worker
                 speakingRef.current = false;
                 if (statusRef.current === 'speaking') set('idle');
                 onDone?.();
@@ -478,6 +667,7 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             // actually playing — the listener learns how loud Monte is from its
             // first moments, and the TTS engine can take ~1 s to start.
             const startBargeIn = () => {
+                if (liveOnRef.current) return; // the session listens for interruptions itself
                 if (!bargeIn || !VoiceDuplex || !modelReady) return;
                 if (finished || id !== speakIdRef.current) return;
                 try {
@@ -489,6 +679,21 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                     log(`barge-in unavailable: ${e?.message || e}`);
                 }
             };
+            // Live session: Monte talks on the call path and the session stops
+            // streaming until the line is over (or the worker talks over it).
+            if (liveOnRef.current) {
+                utterRef.current = '';
+                setPartial('');
+                callLineRef.current = { id, onStart: () => {}, onDone: wrap, onProgress };
+                try {
+                    VoiceDuplex.streamSpeakBegin(id, !!bargeIn);
+                    VoiceDuplex.speakOnCall(String(text), ttsLang, id);
+                    return;
+                } catch (e) {
+                    callLineRef.current = null;
+                    log(`call voice unavailable: ${e?.message || e}`);
+                }
+            }
             // With barge-in, Monte talks on the call path so the phone's echo
             // canceller removes Monte from the mic; as ordinary media Monte is
             // as loud in the mic as the worker and can't be interrupted.
@@ -530,10 +735,10 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
 
     // `init` kept for API compatibility with the screen — Vosk's start() asks
     // for the mic permission itself, so this just reports readiness.
-    const init = useCallback(async () => !!Vosk && modelReady, [modelReady]);
+    const init = useCallback(async () => (!!Vosk && modelReady) || liveOn, [modelReady, liveOn]);
     const refreshDiag = useCallback(() => {
-        log(`diag: module=${!!Vosk} model=${modelReady ? 'ready' : 'not ready'} tts=${!!Speech}`);
-    }, [modelReady, log]);
+        log(`diag: module=${!!Vosk} model=${modelReady ? 'ready' : 'not ready'} tts=${!!Speech} live=${liveOn}`);
+    }, [modelReady, liveOn, log]);
 
     useEffect(
         () => () => {
@@ -549,6 +754,7 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
         module: !!Vosk,
         tts: !!Speech,
         model: modelReady ? 'ready' : status === 'error' ? 'FAILED' : `loading ${loadElapsed}s`,
+        live: liveOn,
         lang,
     };
 
@@ -559,10 +765,13 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
         events,
         diag,
         loadElapsed,
-        available: !!Vosk,
+        available: !!Vosk || liveEnabled,
         // Monte can be interrupted by voice (call-path voice + barge-in listener)
-        canBargeIn: !!VoiceDuplex?.speakOnCall && modelReady,
-        modelReady,
+        canBargeIn: !!VoiceDuplex?.speakOnCall && (modelReady || liveOn),
+        // ready to run a turn: the live session is up, or the offline model is
+        // loaded and the live session isn't about to connect
+        modelReady: liveOn || (modelReady && (!liveEnabled || liveSettled)),
+        live: liveOn,
         ttsAvailable: !!Speech,
         listening: status === 'listening',
         speaking: status === 'speaking',

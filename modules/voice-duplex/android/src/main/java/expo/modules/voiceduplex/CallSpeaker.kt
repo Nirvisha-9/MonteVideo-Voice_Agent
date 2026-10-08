@@ -31,6 +31,7 @@ class CallSpeaker(
   private var pending: (() -> Unit)? = null
   @Volatile private var current = 0 // utterance that owns the call-audio mode (0 = none)
   private var callMode = false
+  @Volatile private var held = false
 
   fun speak(text: String, lang: String, id: Int) {
     val go = {
@@ -86,7 +87,17 @@ class CallSpeaker(
     if (current == 0) leaveCallMode()
   }
 
+  /**
+   * Keep the call-audio mode on between Monte's lines — for a live mic session
+   * (StreamSession), whose recorder would glitch on every mode switch.
+   */
+  fun hold(on: Boolean) {
+    held = on
+    if (on) enterCallMode() else if (current == 0) leaveCallMode()
+  }
+
   fun shutdown() {
+    held = false
     stop()
     tts?.shutdown()
     tts = null
@@ -144,7 +155,7 @@ class CallSpeaker(
   @Suppress("DEPRECATION")
   @Synchronized
   private fun leaveCallMode() {
-    if (!callMode) return
+    if (!callMode || held) return
     callMode = false
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.clearCommunicationDevice() else am.isSpeakerphoneOn = false
     am.mode = AudioManager.MODE_NORMAL

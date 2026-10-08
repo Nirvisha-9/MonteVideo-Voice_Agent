@@ -14,7 +14,8 @@ mkdir -p "$DEST"
 
 # name<TAB>zip-url   (folder is renamed to `model-<name>` for react-native-vosk)
 fetch () {
-  local name="$1" url="$2" dir="$DEST/model-$name"
+  local name="$1" url="$2"
+  local dir="$DEST/model-$name"
   if [ -d "$dir" ]; then echo "✓ model-$name already present"; return; fi
   echo "↓ downloading model-$name …"
   local tmp; tmp="$(mktemp -d)"
