@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
 import { WAKE_WORD } from './voiceCatalog';
 import { VC } from './voiceStyles';
+import { prefetchVoiceClients } from './voiceClients';
 
 /**
  * Entry screen shown right after the user taps "Clasificar".
@@ -10,6 +11,11 @@ import { VC } from './voiceStyles';
  *   - Voice Agent -> the new hands-free prototype
  */
 export default function ClassifyModeSelect({ onManual, onVoice }) {
+    // a head start for the Voice Agent's client list (see voiceClients.js)
+    useEffect(() => {
+        prefetchVoiceClients();
+    }, []);
+
     return (
         <SafeAreaView style={styles.safe}>
             <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>

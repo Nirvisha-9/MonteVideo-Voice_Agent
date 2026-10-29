@@ -257,8 +257,9 @@ export function parseSummaryCommand(text) {
         }
         return { action: 'redoAsk' };
     }
+    // "evitar" / "evita": how the recognizer often hears "editar" / "edita"
     if (/\b(edit|change|update|fix)\b/.test(n) ||
-        /\b(editar|edita|cambiar|cambia|corregir|corrige|modificar|modifica)\b/.test(n)) {
+        /\b(editar|edita|evitar|evita|cambiar|cambia|corregir|corrige|modificar|modifica)\b/.test(n)) {
         const target = n
             .replace(/.*\b(for|the weight for|weight for|item|de|el peso de|peso de|elemento)\b/, '')
             .replace(/\b(weight|the|peso|el|la)\b/g, '')

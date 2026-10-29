@@ -33,7 +33,7 @@ const COMMON = {
 const WORDS = {
     en: {
         wake: ['monte', 'hey monte', 'okay monte', 'ok monte'],
-        addbags: ['yes', 'no', 'yeah', 'nope', 'add bags', 'not now', 'go back'],
+        addbags: ['yes', 'no', 'yeah', 'nope', 'add bags', 'restart', 'start over', 'go back'],
         categoryExtra: [
             'paper', 'cardboard', 'plastic', 'plastics', 'other', 'recyclables',
             'organic', 'mixed', 'unidentified', 'read out the options', 'options',
@@ -54,7 +54,7 @@ const WORDS = {
     },
     es: {
         wake: ['monte', 'hola monte', 'oye monte'],
-        addbags: ['sí', 'si', 'no', 'agregar bolsas', 'ahora no', 'volver'],
+        addbags: ['sí', 'si', 'no', 'agregar bolsas', 'reiniciar', 'empezar de nuevo', 'volver'],
         categoryExtra: [
             'papel', 'cartón', 'carton', 'plástico', 'plásticos', 'plasticos',
             'otros', 'reciclables', 'orgánico', 'organico', 'mezclado',

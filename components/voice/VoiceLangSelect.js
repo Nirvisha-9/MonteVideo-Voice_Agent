@@ -1,12 +1,18 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
 import { VC } from './voiceStyles';
+import { prefetchVoiceClients } from './voiceClients';
 
 /**
  * Shown after "Voice Agent" is picked — choose the language the agent speaks
  * and understands. English is ready; Spanish uses the model-es-es Vosk model.
  */
 export default function VoiceLangSelect({ onPick, onBack }) {
+    // the voice screen opens on the client question: have the list ready
+    useEffect(() => {
+        prefetchVoiceClients();
+    }, []);
+
     return (
         <SafeAreaView style={styles.safe}>
             <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>

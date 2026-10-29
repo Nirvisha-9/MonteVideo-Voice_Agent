@@ -247,6 +247,18 @@ export default StyleSheet.create({
         borderColor: VC.danger,
     },
     micBtnText: { fontSize: 18 },
+    // shown while paused by voice ("pausar"); tapping it resumes too
+    pauseBtn: {
+        marginHorizontal: 14,
+        marginBottom: 10,
+        paddingVertical: 16,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#DC2626',
+        backgroundColor: '#DC2626',
+        alignItems: 'center',
+    },
+    pauseBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
     voiceError: {
         color: VC.danger,
         fontSize: 13,

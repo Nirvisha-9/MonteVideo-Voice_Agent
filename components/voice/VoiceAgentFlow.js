@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     KeyboardAvoidingView,
     Platform,
+    Pressable,
     ScrollView,
     Text,
     TextInput,
@@ -16,6 +17,7 @@ import VoiceTest from './VoiceTest';
 import buildGrammar from './voiceGrammar';
 import { chooseWithJev, interpretWithLLM, reviseWithLLM, transcribeWithCloud } from './llmInterpreter';
 import { getStrings } from './voiceStrings';
+import { peekVoiceClients, prefetchVoiceClients } from './voiceClients';
 import {
     getCategories,
     VOICE_SUBCATEGORIES,
@@ -36,11 +38,31 @@ import {
 // Accepted mis-hearings of the wake word.
 const WAKE_VARIANTS = ['monte', 'monty', 'montey', 'montie', 'monta', 'mounte', 'monde', 'mount'];
 
+// "pausar" (alone) pauses the agent so the worker can talk to someone else;
+// "reactivar" anywhere in what is heard brings it back. Spanish words in both
+// languages, plus how the English recognizer tends to write them.
+const PAUSE_RE = /^(monte )?(pausar|pausa|pausado|pause|pauser|pause are|pause her)( por favor| please)?$/;
+// (bare "activar" / "activate" only on its own: it turns up in conversation)
+const RESUME_RE = /\b(reactivar|reactiva|reactivate|reactivated|re activar|re activate|react evar)\b|^(monte )?(activar|activa|activate)$/;
+
+// "Add bags?" answered with the second option: start the collection over.
+const RESTART_RE = /\b(restart|start over|start again|reiniciar|reinicia|reinicio|empezar de nuevo|empezar otra vez|de cero)\b/;
+
 const MODEL_FOR = { en: 'model-en-en', es: 'model-es-es' };
 
 // Option scoring (Jev): how sure it must be of a pick.
 const PICK_ACCEPT = 0.67; // select without asking
 const PICK_CONFIRM = 0.5; // select, and ask the worker to confirm; below: ask again
+
+// The summary screen's two numbered options, worded for Jev (the chips show
+// the short labels) and mapped to the command the parser understands.
+const SUMMARY_PICKS = [
+    { id: 'add', command: 'add another', hint: 'record one more material, add more, another one' },
+    { id: 'submit', command: 'submit', hint: 'save, send or finish the collection; done, that is all' },
+];
+// Words that make a summary answer a correction or an edit, not one of the two.
+const SUMMARY_EDIT_CUE =
+    /\b(instead|rather|not|wrong|actually|should|change|edit|delete|remove|redo|weight|kilos?|kg|en vez|en lugar|no es|mal|cambi\w*|edit\w*|evit\w*|borr\w*|elimin\w*|rehacer|peso)\b/;
 
 // A weight is shown this long, then saved without asking — time to correct it.
 const WEIGHT_SAVE_MS = 1000;
@@ -107,7 +129,13 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const STEP_PILL = t.pill;
     const HINTS = t.hint;
 
-    const [clients, setClients] = useState([]);
+    // Fetched ahead on the mode / language screens: when it's here, the first
+    // question (and the live session) can start right away.
+    const prefetchedRef = useRef(undefined);
+    if (prefetchedRef.current === undefined) prefetchedRef.current = peekVoiceClients();
+    const prefetched = prefetchedRef.current;
+
+    const [clients, setClients] = useState(() => prefetched || []);
     const [selectedClient, setSelectedClient] = useState(null);
     const [selectedLocation, setSelectedLocation] = useState(null);
     // the client's collections still to classify (their dates are the options
@@ -127,8 +155,11 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             ? `${selectedClient.client_name}, ${selectedLocation.name}${selectedDate ? `, ${selectedDate}` : ''}`
             : `${VOICE_CONTEXT.client}, ${VOICE_CONTEXT.location}`;
 
-    const [phase, setPhase] = useState('loadingctx');
-    const [question, setQuestion] = useState('');
+    const firstPhase = (list) => (list.length ? 'client' : 'addbags');
+    const firstQuestion = (list) =>
+        list.length ? t.qClient : t.qAddBagsAt(`${VOICE_CONTEXT.client}, ${VOICE_CONTEXT.location}`);
+    const [phase, setPhase] = useState(() => (prefetched ? firstPhase(prefetched) : 'loadingctx'));
+    const [question, setQuestion] = useState(() => (prefetched ? firstQuestion(prefetched) : ''));
     const [agentLine, setAgentLine] = useState('');
     const [heard, setHeard] = useState('');
     const [micText, setMicText] = useState('');
@@ -159,6 +190,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const scrollRef = useRef(null);
 
     const [voiceOn, setVoiceOn] = useState(true);
+    const [paused, setPaused] = useState(false); // the worker said "pausar"
     const [showTest, setShowTest] = useState(false);
     const [interpreting, setInterpreting] = useState(false);
     const [readOut, setReadOut] = useState(null); // { opts, typeLabel, i } while reading the list aloud
@@ -216,6 +248,13 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             speakReadOutItemRef.current(readOutRef.current.i + 1);
             return;
         }
+        // paused: keep the mic open for "reactivar", however long it takes
+        if (pausedRef.current) {
+            setTimeout(() => {
+                if (pausedRef.current) voiceRef.current?.listen(grammarRef.current);
+            }, 400);
+            return;
+        }
         if (!wantListenRef.current) return;
         noResultRef.current += 1;
         if (noResultRef.current <= 4) {
@@ -234,6 +273,13 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const liveKeyterms = useMemo(
         () => [
             'kilos',
+            'pausar',
+            'reactivar',
+            VOICE_LANG === 'es' ? 'reiniciar' : 'restart',
+            // summary commands, so "editar" isn't heard as "evitar"
+            ...(VOICE_LANG === 'es'
+                ? ['editar', 'borrar', 'enviar', 'agregar otro', 'rehacer', 'peso']
+                : ['edit', 'delete', 'submit', 'add another', 'redo', 'weight']),
             AGENT_NAME,
             ...categoryOptions.map((o) => o.label),
             ...clients.map((c) => c.client_name),
@@ -253,6 +299,12 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             keyterms: liveKeyterms,
         },
         onTranscript: (text, audio) => {
+            if (pausedRef.current) {
+                // nothing said while paused is acted on, except the way back
+                if (RESUME_RE.test(normalize(text))) resumeVoiceRef.current();
+                else handleNoResult('paused');
+                return;
+            }
             noResultRef.current = 0;
             handleUtteranceRef.current(text, audio);
         },
@@ -260,6 +312,8 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     });
     const voiceRef = useRef(voice);
     voiceRef.current = voice;
+    const pausedRef = useRef(false);
+    const resumeVoiceRef = useRef(() => {});
     const { speak, listen } = voice;
 
     // What Monte should say on the current screen.
@@ -300,27 +354,16 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     // Load the client list, then start at "select client" (or skip to Add Bags
     // if it can't be loaded — offline / no clients).
     useEffect(() => {
+        voice.logEvent?.(prefetched ? `clients ready (${prefetched.length}, fetched ahead)` : 'loading clients');
+        if (prefetched) return undefined;
         let alive = true;
         (async () => {
-            let list = [];
-            try {
-                // lazy require: keeps firebase/firestore out of the module graph
-                // for environments that can't resolve it (unit tests)
-                // eslint-disable-next-line global-require
-                const { getClients } = require('../../services/clientService');
-                list = (await getClients()) || [];
-            } catch (e) {
-                list = [];
-            }
+            const list = await prefetchVoiceClients(); // joins a fetch already under way
             if (!alive) return;
+            voice.logEvent?.(`clients loaded (${list.length})`);
             setClients(list);
-            if (list.length) {
-                setPhase('client');
-                setQuestion(t.qClient);
-            } else {
-                setPhase('addbags');
-                setQuestion(t.qAddBagsAt(placeLabel));
-            }
+            setPhase(firstPhase(list));
+            setQuestion(firstQuestion(list));
         })();
         return () => {
             alive = false;
@@ -345,12 +388,12 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     // Every time the prompt changes, run the next turn (unless a list read-out
     // is in progress — that drives its own speak / listen cycle).
     useEffect(() => {
-        if (readOut) return;
+        if (readOut || paused) return;
         if (!voiceOn || !voice.modelReady) return;
         if (!spokenLine || spokenLine === spokenRef.current) return;
         runTurn();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [spokenLine, voiceOn, voice.modelReady, readOut]);
+    }, [spokenLine, voiceOn, voice.modelReady, readOut, paused]);
 
     // Read the option list aloud from item `i`, so the worker can name/number
     // their pick the moment they hear it and Monte stops right there.
@@ -532,6 +575,25 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         bumpScroll();
     };
 
+    // "Restart" on "add bags?": a fresh collection from the first question.
+    const restartFlow = () => {
+        cancelAutoSave();
+        setItems([]);
+        setPending(null);
+        setRevising(null);
+        setSelectedClient(null);
+        setSelectedLocation(null);
+        setSelectedCollection(null);
+        setClientCollections([]);
+        setSubmitAsking(false);
+        setRedoAsking(false);
+        setRedoAllConfirm(false);
+        setEditTargetId(null);
+        setHeard('');
+        if (clientOptions.length) goToClient(t.restarting);
+        else goToAddBags(t.restarting);
+    };
+
     const startFlow = () => {
         setItems([]);
         setPending(null);
@@ -578,7 +640,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
                 return { opts: dateOptions, typeLabel: 'date' };
             case 'addbags':
                 return {
-                    opts: [{ id: 'yes', label: t.chipYes }, { id: 'no', label: t.chipNot }],
+                    opts: [{ id: 'yes', label: t.chipYes }, { id: 'restart', label: t.chipRestart }],
                     typeLabel: 'addbags',
                 };
             case 'category':
@@ -605,11 +667,11 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             return true;
         }
         if (typeLabel === 'addbags') {
-            // yes / not now: nothing to confirm, and the parser asks again
+            // yes / restart: nothing to confirm, and the parser asks again
             const answer = r.confidence >= PICK_CONFIRM && r.index >= 0 ? opts[r.index] : null;
             if (!answer) return false;
             if (answer.id === 'yes') goToCategory(t.openingCategories);
-            else setAgentLine(t.noProblemSayYes);
+            else restartFlow();
             return true;
         }
         if (r.confidence >= PICK_CONFIRM && r.control === 'read') {
@@ -656,7 +718,8 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
                 return !!matchOption(text, dateOptions) || wantsGoBack(text) || wantsReadOut(text) ||
                     (confirming && (isAffirmative(text) || isNegative(text)));
             case 'addbags':
-                return isAffirmative(text) || isNegative(text) || wantsGoBack(text) || /\badd bags\b/.test(n);
+                return isAffirmative(text) || isNegative(text) || wantsGoBack(text) || /\badd bags\b/.test(n) ||
+                    RESTART_RE.test(n) || isPlainNumber(text, [0, 1]);
             case 'category':
                 return !!matchOption(text, categoryOptions) || wantsGoBack(text) || wantsReadOut(text) ||
                     (confirming && (isAffirmative(text) || isNegative(text)));
@@ -724,6 +787,11 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         }
         setHeard(text || cloudCmd);
 
+        if (PAUSE_RE.test(normalize(text))) {
+            pauseVoice();
+            return;
+        }
+
         if (readOutRef.current) {
             handleReadOutResponse(cloudCmd || text);
             return;
@@ -743,6 +811,15 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         // stay with the parser below — which also takes over when Jev can't
         // be reached.
         const pick = pickScreen();
+        // "two" / "number two" / a tapped option names exactly one option:
+        // nothing to score and nothing to confirm.
+        if (pick && phase !== 'addbags' && !confirming && isPlainNumber(text, pick.opts)) {
+            const option = pick.opts[parseNumber(normalize(text)) - 1];
+            voice.logEvent?.(`number → ${option.label}`);
+            setHeard(`“${text}”  →  ${option.label}`);
+            confirmSelection(pick.opts, pick.typeLabel, option);
+            return;
+        }
         // (a plain yes / no to "add bags?" needs no scoring either)
         const plainAnswer = pick && (isPlainNumber(text, pick.opts) || (phase === 'addbags' && localCanHandle(text)));
         if (pick && !confirming && !plainAnswer) {
@@ -763,6 +840,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             }
         }
 
+        if (phase === 'summary' && (await trySummaryPick(text))) return;
         if (phase === 'summary' && (await tryRevise(text))) return;
 
         if (localCanHandle(text)) {
@@ -803,6 +881,54 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         if (!handled) routeToPhase(text);
     };
     handleUtteranceRef.current = handleUtterance;
+
+    // Summary screen: "one" / "two", or the two options in the worker's own
+    // words ("add more", "save it", "that's all") as scored by Jev. Returns
+    // true when the answer was one of them (and handled).
+    const trySummaryPick = async (text) => {
+        if (submitAsking || redoAsking || redoAllConfirm) return false;
+        const opts = [
+            { ...SUMMARY_PICKS[0], label: t.chipAdd },
+            { ...SUMMARY_PICKS[1], label: t.chipSubmit },
+        ];
+        if (isPlainNumber(text, opts)) {
+            const option = opts[parseNumber(normalize(text)) - 1];
+            setHeard(`“${text}”  →  ${option.label}`);
+            routeToPhase(option.command);
+            return true;
+        }
+        const n = normalize(text);
+        // corrections, edits and anything the parser already knows are not for Jev
+        if (SUMMARY_EDIT_CUE.test(n) || parseNumber(n) != null) return false;
+        if (parseSummaryCommand(text).action !== 'unknown') return false;
+        if (isAffirmative(text) || isNegative(text) || wantsGoBack(text)) return false;
+
+        setInterpreting(true);
+        const r = await chooseWithJev({
+            transcript: text,
+            phase: 'summary',
+            language: VOICE_LANG,
+            options: opts.map((o, i) => ({ n: i + 1, id: o.id, label: `${o.label}: ${o.hint}` })),
+        });
+        setInterpreting(false);
+        if (!r || r.error) {
+            if (r?.error) voice.logEvent?.(`Jev unavailable, using phone: ${r.error}`);
+            return false;
+        }
+        const option = r.index >= 0 ? opts[r.index] : null;
+        voice.logEvent?.(`Jev → ${option?.label || r.control || 'none'} (${r.confidence.toFixed(2)})`);
+        if (r.confidence < PICK_ACCEPT) return false;
+        if (option) {
+            setHeard(`“${text}”  →  ${option.label} (${Math.round(r.confidence * 100)}%)`);
+            routeToPhase(option.command);
+            return true;
+        }
+        if (r.control === 'read') {
+            routeToPhase('read everything');
+            return true;
+        }
+        return false;
+    };
 
     // Summary screen: "not cardboard, plastics — and seven kilos" corrects a
     // saved item. Returns true when the answer was a correction (and handled).
@@ -907,6 +1033,35 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         });
     };
 
+    // "pausar": Monte goes quiet and whatever is heard is ignored, so the
+    // worker can talk to someone else — except "reactivar", which carries on
+    // from the same step with the question asked again.
+    const pauseVoice = () => {
+        if (pausedRef.current) return;
+        pausedRef.current = true;
+        cancelReadOut();
+        cancelAutoSave();
+        setPaused(true);
+        setHeard('');
+        voice.logEvent?.('paused');
+        wantListenRef.current = true;
+        speak(t.pausedSpoken, {
+            onDone: () => {
+                if (pausedRef.current) listen(grammarRef.current);
+            },
+        });
+    };
+    const resumeVoice = () => {
+        if (!pausedRef.current) return;
+        pausedRef.current = false;
+        voice.logEvent?.('resumed');
+        setHeard('');
+        noResultRef.current = 0;
+        spokenRef.current = ''; // the prompt effect asks the question again
+        setPaused(false);
+    };
+    resumeVoiceRef.current = resumeVoice;
+
     // Manual "talk to me now" — the reliable fallback if auto-listen misses.
     const talkNow = () => {
         cancelReadOut();
@@ -932,15 +1087,20 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const handleAddBags = (text) => {
         if (wantsGoBack(text)) return goBack();
         const n = normalize(text);
-        const yes =
-            isAffirmative(text) ||
-            /\badd bags\b|\bagregar bolsas\b/.test(n) ||
-            matchOption(text, [{ id: 'y', label: 'Yes' }, { id: 'n', label: 'Not now' }])?.option?.id === 'y';
+        const picked = matchOption(text, [
+            { id: 'yes', label: t.chipYes },
+            { id: 'restart', label: t.chipRestart },
+        ])?.option?.id;
+        if (RESTART_RE.test(n) || picked === 'restart') {
+            restartFlow();
+            return;
+        }
+        const yes = isAffirmative(text) || /\badd bags\b|\bagregar bolsas\b/.test(n) || picked === 'yes';
         if (yes && !isNegative(text)) {
             goToCategory(t.openingCategories);
             return;
         }
-        if (isNegative(text) || /\bnot now\b|\bahora no\b/.test(n)) {
+        if (isNegative(text)) {
             setAgentLine(t.noProblemSayYes);
             return;
         }
@@ -1397,6 +1557,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         if (!voice.available) return t.stNotInBuild;
         if (voice.status === 'error') return t.stError(voice.lastError);
         if (!voice.modelReady) return t.stLoading(voice.loadElapsed || 0);
+        if (paused) return t.stPaused;
         if (interpreting) return t.stThinking;
         if (readOut) return t.stReading;
         if (!voiceOn) return t.stVoiceOff;
@@ -1515,7 +1676,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
                     renderChips(
                         [
                             { id: 'yes', label: t.chipYes },
-                            { id: 'no', label: t.chipNot },
+                            { id: 'restart', label: t.chipRestart },
                         ],
                         1
                     )}
@@ -1564,6 +1725,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
                 )}
 
                 <Text style={styles.hint}>{HINTS[phase]}</Text>
+                <Text style={styles.hint}>{t.pauseHint}</Text>
             </>
         );
     };
@@ -1613,6 +1775,12 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
                 >
                     {renderBody()}
                 </ScrollView>
+
+                {paused && (
+                    <Pressable style={styles.pauseBtn} onPress={resumeVoice}>
+                        <Text style={styles.pauseBtnText}>{t.pausedBanner}</Text>
+                    </Pressable>
+                )}
 
                 {phase !== 'done' && (
                     <View style={styles.inputBar}>
