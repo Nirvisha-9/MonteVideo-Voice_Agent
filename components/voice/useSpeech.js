@@ -29,7 +29,14 @@ import { PermissionsAndroid, Platform } from 'react-native';
 
 // eslint-disable-next-line import/first
 import VoiceDuplex from '../../modules/voice-duplex';
-import { cleanTranscript, liveAuthorization, liveUrl } from './deepgramStream';
+import {
+    CLOUD_VOICE,
+    CLOUD_VOICE_RATE,
+    cleanTranscript,
+    cloudVoiceUrl,
+    liveAuthorization,
+    liveUrl,
+} from './deepgramStream';
 
 // How far (dB) the worker's voice must rise above what's left of Monte's voice
 // in the echo-cancelled mic before Monte is interrupted.
@@ -170,13 +177,49 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
 
     const ttsLang = lang === 'es' ? 'es-ES' : 'en-US';
 
+    // Monte's cloud voice for this language (see CLOUD_VOICE), and what
+    // authorizes it. A short-lived token is fetched again after ~50 s; meanwhile
+    // a refused line falls back to the phone's voice on its own (native side).
+    const cloudModel = VoiceDuplex?.speakCloudOnCall ? CLOUD_VOICE[lang] || null : null;
+    const cloudAuthRef = useRef({ value: null, at: 0, loading: false });
+    const refreshCloudAuth = () => {
+        const a = cloudAuthRef.current;
+        if (!cloudModel || a.loading) return;
+        a.loading = true;
+        liveAuthorization()
+            .then((value) => {
+                cloudAuthRef.current = { value, at: Date.now(), loading: false };
+            })
+            .catch(() => {
+                cloudAuthRef.current = { ...cloudAuthRef.current, loading: false };
+            });
+    };
+    useEffect(() => {
+        cloudAuthRef.current = { value: null, at: 0, loading: false };
+        refreshCloudAuth();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cloudModel]);
+
+    // A line on the call path: the cloud voice when it's set up, else the phone's.
+    const speakOnCallPath = (text, id) => {
+        const auth = cloudAuthRef.current;
+        if (auth.value?.startsWith('Bearer') && Date.now() - auth.at > 50000) refreshCloudAuth();
+        if (cloudModel && auth.value) {
+            VoiceDuplex.speakCloudOnCall(String(text), cloudVoiceUrl(cloudModel), auth.value, CLOUD_VOICE_RATE, ttsLang, id);
+        } else {
+            VoiceDuplex.speakOnCall(String(text), ttsLang, id);
+        }
+    };
+
     const set = useCallback((s) => {
         statusRef.current = s;
         setStatus(s);
     }, []);
+    const mountedAt = useRef(Date.now()).current;
     const log = useCallback((line) => {
+        // ms since the voice screen opened, to see where startup time goes
         // eslint-disable-next-line no-console
-        if (__DEV__) console.log(`[voice] ${line}`); // adb logcat -s ReactNativeJS
+        if (__DEV__) console.log(`[voice +${Date.now() - mountedAt}ms] ${line}`); // shown in Metro
         setEvents((p) => [`${stamp()}  ${line}`, ...p].slice(0, MAX_EVENTS));
     }, []);
 
@@ -475,6 +518,8 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [set, log]);
 
+    const firstLineRef = useRef(true); // log when Monte's first line is heard
+
     /* ------------------------------------------------------- live session   */
     useEffect(() => {
         liveRetryRef.current = false;
@@ -649,6 +694,7 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
                 finish();
                 return;
             }
+            if (firstLineRef.current) log(`first line starts (${liveOnRef.current ? 'live' : 'offline'})`);
             speakingRef.current = true;
             set('speaking');
             stopInternal(); // Monte talks: close the mic (either recognizer)
@@ -684,10 +730,14 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             if (liveOnRef.current) {
                 utterRef.current = '';
                 setPartial('');
-                callLineRef.current = { id, onStart: () => {}, onDone: wrap, onProgress };
+                const onStart = () => {
+                    if (firstLineRef.current) log('first line audible');
+                    firstLineRef.current = false;
+                };
+                callLineRef.current = { id, onStart, onDone: wrap, onProgress };
                 try {
                     VoiceDuplex.streamSpeakBegin(id, !!bargeIn);
-                    VoiceDuplex.speakOnCall(String(text), ttsLang, id);
+                    speakOnCallPath(text, id);
                     return;
                 } catch (e) {
                     callLineRef.current = null;
@@ -700,7 +750,7 @@ export default function useSpeech({ lang = 'en', model = 'model-en-en', onTransc
             if (bargeIn && VoiceDuplex?.speakOnCall && modelReady) {
                 callLineRef.current = { id, onStart: startBargeIn, onDone: wrap, onProgress };
                 try {
-                    VoiceDuplex.speakOnCall(String(text), ttsLang, id);
+                    speakOnCallPath(text, id);
                     return;
                 } catch (e) {
                     callLineRef.current = null;

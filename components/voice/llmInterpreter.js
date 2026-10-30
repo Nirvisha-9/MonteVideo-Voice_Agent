@@ -8,6 +8,8 @@
  * The LLM API key lives server-side in functions/.env — never here.
  */
 
+import { JEV_DIRECT, chooseDirect } from './jevDirect';
+
 const REGION = 'us-central1';
 const TIMEOUT_MS = 7000;
 
@@ -120,7 +122,9 @@ const CHOOSE_BACKOFF_MS = 60000;
 let chooseDownUntil = 0;
 
 /**
- * Calls the `choose` Cloud Function: which of `options` did the worker mean?
+ * Which of `options` did the worker mean? Asks Jev through the `choose` Cloud
+ * Function — or straight from the app in a build that carries the TypeSafe key
+ * (see jevDirect.js), which needs no Cloud Functions.
  * Resolves to { index, label, control, confidence, top }, { error } (offline,
  * timeout, not deployed) or null (recently failed; skipped) — on anything but
  * a result the caller uses the on-device parser.
@@ -129,17 +133,22 @@ export async function chooseWithJev(payload) {
     if (Date.now() < chooseDownUntil) return null;
     let timer = null;
     try {
-        if (!chooseFn) {
-            const { functions, httpsCallable } = getFunctionsInstance();
-            chooseFn = httpsCallable(functions, 'choose', { timeout: CHOOSE_TIMEOUT_MS });
+        let data = null;
+        if (JEV_DIRECT) {
+            data = await chooseDirect(payload, CHOOSE_TIMEOUT_MS);
+        } else {
+            if (!chooseFn) {
+                const { functions, httpsCallable } = getFunctionsInstance();
+                chooseFn = httpsCallable(functions, 'choose', { timeout: CHOOSE_TIMEOUT_MS });
+            }
+            const result = await Promise.race([
+                chooseFn({ ...payload, appToken: APP_SHARED_TOKEN }),
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => reject(new Error('choose-timeout')), CHOOSE_TIMEOUT_MS);
+                }),
+            ]);
+            data = result?.data;
         }
-        const result = await Promise.race([
-            chooseFn({ ...payload, appToken: APP_SHARED_TOKEN }),
-            new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error('choose-timeout')), CHOOSE_TIMEOUT_MS);
-            }),
-        ]);
-        const data = result?.data;
         if (!data) return null;
         return {
             index: Number.isInteger(data.index) ? data.index : -1,

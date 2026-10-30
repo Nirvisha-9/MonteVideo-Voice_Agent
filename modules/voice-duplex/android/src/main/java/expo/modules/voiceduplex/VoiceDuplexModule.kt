@@ -114,6 +114,11 @@ class VoiceDuplexModule : Module() {
       callSpeaker.speak(text, lang, id)
     }
 
+    // The same, with a cloud voice (Deepgram Aura) — see CallSpeaker.speakCloud.
+    Function("speakCloudOnCall") { text: String, url: String, authorization: String, sampleRate: Int, lang: String, id: Int ->
+      callSpeaker.speakCloud(text, url, authorization, sampleRate, lang, id)
+    }
+
     Function("stopSpeakingOnCall") {
       // keep call audio if a barge-in is still recording the worker's sentence
       speaker?.stop(holdMode = bargeIn?.recognizing == true)

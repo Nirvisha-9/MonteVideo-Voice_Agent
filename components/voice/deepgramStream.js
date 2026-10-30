@@ -51,6 +51,19 @@ export function liveUrl(lang, keyterms = []) {
     return `wss://api.deepgram.com/v1/listen?${query}`;
 }
 
+/**
+ * Monte's cloud voice (Deepgram Aura), per language — null = the phone's own
+ * text-to-speech. Antonia is Rioplatense, like the workers in Montevideo.
+ */
+export const CLOUD_VOICE = { es: 'aura-2-antonia-es', en: null };
+export const CLOUD_VOICE_RATE = 24000;
+
+/** Raw 16-bit mono PCM, so the phone can play it while it downloads. */
+export function cloudVoiceUrl(model) {
+    return `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(model)}` +
+        `&encoding=linear16&sample_rate=${CLOUD_VOICE_RATE}&container=none`;
+}
+
 /** "Plástico, 24,5 kilos." -> "Plástico 24.5 kilos" — what the parser expects. */
 export function cleanTranscript(text) {
     return String(text || '')
