@@ -9,6 +9,7 @@
  */
 
 import { JEV_DIRECT, chooseDirect } from './jevDirect';
+import { CLAUDE_DIRECT, interpretDirect, reviseDirect } from './claudeDirect';
 
 const REGION = 'us-central1';
 const TIMEOUT_MS = 7000;
@@ -55,7 +56,8 @@ function getCallable() {
 export async function interpretWithLLM(payload) {
     let timer = null;
     try {
-        const call = getCallable();
+        // a build with the Anthropic key asks Claude itself (claudeDirect.js)
+        const call = CLAUDE_DIRECT ? (p) => interpretDirect(p).then((data) => ({ data })) : getCallable();
         const result = await Promise.race([
             call({ ...payload, appToken: APP_SHARED_TOKEN }),
             new Promise((_, reject) => {
@@ -85,7 +87,9 @@ export async function interpretWithLLM(payload) {
 export async function reviseWithLLM(payload) {
     let timer = null;
     try {
-        if (!reviseFn) {
+        if (CLAUDE_DIRECT) {
+            reviseFn = reviseFn || ((p) => reviseDirect(p).then((data) => ({ data })));
+        } else if (!reviseFn) {
             const { functions, httpsCallable } = getFunctionsInstance();
             reviseFn = httpsCallable(functions, 'revise', { timeout: TIMEOUT_MS });
         }
