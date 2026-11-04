@@ -12,7 +12,12 @@ import { TouchableOpacity } from 'react-native-gesture-handler';
 import dictionary from '../../localization/dictionary';
 import collectSharedStyles from './collectStyles';
 import dateFormater from '../../helper/dateFormatter';
-import { collectMaterialStylesDict } from './collectMaterialStyles';
+import {
+    getMaterialColor,
+    getMaterialOrSubMaterialLabel,
+    fetchAllActiveMaterials,
+    subscribeMaterialCache
+} from '../../services/materialService';
 import { useCollectContext } from '../../context/CollectContext';
 import { getClient } from '../../services/clientService';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,6 +34,14 @@ export default function CollectStageTwo({ navigation }) {
 
     // Cache hydrated client details so popup + confirm share the same fetch
     const [clientDetails, setClientDetails] = useState(null);
+    const [, setCacheVersion] = useState(0);
+
+    // Ensure material metadata is loaded
+    React.useEffect(() => {
+        fetchAllActiveMaterials().catch((err) => console.error('Error prefetching materials:', err));
+        const unsub = subscribeMaterialCache(() => setCacheVersion((v) => v + 1));
+        return unsub;
+    }, []);
 
     const normalizeClient = (res) => res?.client ?? res?.data?.client ?? res ?? null;
     const hasLocations = (c) => c && Array.isArray(c.locations);
@@ -391,11 +404,11 @@ const BagCard = ({ bagEntry, handleRemoveCollection, dictionary, navigation }) =
         <View
             style={[
                 collectStageTwoStyles.bagCardContainer,
-                { backgroundColor: collectMaterialStylesDict[bagEntry.materialId]?.color || COLORS.primary }
+                { backgroundColor: getMaterialColor(bagEntry.materialId, COLORS.primary) }
             ]}
         >
             <Text style={collectStageTwoStyles.bagCardMainText}>
-                {collectMaterialStylesDict[bagEntry.materialId]?.label || ''}
+                {getMaterialOrSubMaterialLabel(bagEntry.materialId)}
             </Text>
             <View style={collectStageTwoStyles.bagCardSecundaryContainer}>
                 <View style={{

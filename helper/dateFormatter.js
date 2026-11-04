@@ -1,3 +1,5 @@
+import { getLanguage } from '../localization/dictionary';
+
 export default function dateFormatter(date) {
   let dateObject;
 
@@ -14,7 +16,8 @@ export default function dateFormatter(date) {
 
   if (isNaN(dateObject)) return '';
 
-  return dateObject.toLocaleDateString('es-UY', {
+  const locale = getLanguage() === 'en' ? 'en-US' : 'es-UY';
+  return dateObject.toLocaleDateString(locale, {
     month: 'long',
     day: 'numeric',
     year: 'numeric',

@@ -5,7 +5,12 @@ import { TouchableOpacity } from "react-native-gesture-handler";
 import classifySharedStyles from "./classifyStyles";
 import dictionary from "../../localization/dictionary";
 import dateFormater from "../../helper/dateFormatter";
-import { classifyMaterialStylesDict, classifySubMaterialsDict } from "./classifyMaterialStyles";
+import {
+    getMaterialOrSubMaterialLabel,
+    getMaterialColor,
+    fetchAllActiveMaterials,
+    subscribeMaterialCache
+} from "../../services/materialService";
 import { useClassifyContext } from '../../context/ClassifyContext';
 
 const BOTTOM_HEIGHT = 78; // controls bar height (approx); keep in sync with styles
@@ -21,7 +26,14 @@ export default function ClassifyStageTwo({ navigation }) {
 
 
     const [isSubmitting, setIsSubmitting] = React.useState(false);
+    const [, setCacheVersion] = React.useState(0);
     const isHydrating = form?.isLoading === true || form?.status === "hydrating" || !Array.isArray(form?.classifications);
+
+    React.useEffect(() => {
+        fetchAllActiveMaterials().catch((err) => console.error('Error prefetching materials in Classify:', err));
+        const unsub = subscribeMaterialCache(() => setCacheVersion((v) => v + 1));
+        return unsub;
+    }, []);
 
     const clientName = form?.client?.client_name ?? form?.client?.name ?? dictionary.sharedFields.unknownClient ?? "—";
     const placeName = form?.location?.name ?? form?.location?.label ?? dictionary.sharedFields.unknownPlace ?? "—";
@@ -87,10 +99,10 @@ export default function ClassifyStageTwo({ navigation }) {
             </TouchableOpacity>
 
             <Text style={classifySharedStyles.fieldText}>
-                {`Peso Recolección: ${collectionKg} Kg`}
+                {`${dictionary?.classify?.collectionWeight || "Peso Recolección"}: ${collectionKg} Kg`}
             </Text>
             <Text style={classifySharedStyles.fieldText}>
-                {`Peso Clasificado: ${totalKg} Kg`}
+                {`${dictionary?.classify?.classifiedWeight || "Peso Clasificado"}: ${totalKg} Kg`}
             </Text>
         </View>
     );
@@ -117,20 +129,20 @@ export default function ClassifyStageTwo({ navigation }) {
 
         lines.push(`${dictionary?.sharedFields?.client || "Cliente"}: ${client.client_name ?? client.name ?? "—"}`);
 
-        if (client.contact_name) lines.push(`Contacto: ${client.contact_name}`);
-        if (client.contact_email) lines.push(`Email: ${client.contact_email}`);
-        if (client.contact_phone) lines.push(`Tel: ${client.contact_phone}`);
-        if (client.pickup_frequency) lines.push(`Frecuencia: ${client.pickup_frequency}`);
+        if (client.contact_name) lines.push(`${dictionary?.sharedFields?.contact || "Contacto"}: ${client.contact_name}`);
+        if (client.contact_email) lines.push(`${dictionary?.sharedFields?.email || "Email"}: ${client.contact_email}`);
+        if (client.contact_phone) lines.push(`${dictionary?.sharedFields?.phone || "Tel"}: ${client.contact_phone}`);
+        if (client.pickup_frequency) lines.push(`${dictionary?.sharedFields?.frequency || "Frecuencia"}: ${client.pickup_frequency}`);
 
         const locs = Array.isArray(client.locations) ? client.locations : [];
         if (locs.length) {
             lines.push("");
-            lines.push("Ubicaciones:");
+            lines.push(`${dictionary?.classify?.locations || "Ubicaciones"}:`);
             locs.forEach((loc, idx) => {
                 lines.push(`${idx + 1}) ${loc?.name ?? "—"}`);
-                if (loc?.address) lines.push(`   Dirección: ${loc.address}`);
-                if (loc?.contact_name) lines.push(`   Contacto: ${loc.contact_name}`);
-                if (loc?.contact_phone) lines.push(`   Tel/Email: ${loc.contact_phone}`);
+                if (loc?.address) lines.push(`   ${dictionary?.sharedFields?.address || "Dirección"}: ${loc.address}`);
+                if (loc?.contact_name) lines.push(`   ${dictionary?.sharedFields?.contact || "Contacto"}: ${loc.contact_name}`);
+                if (loc?.contact_phone) lines.push(`   ${dictionary?.classify?.phoneEmail || "Tel/Email"}: ${loc.contact_phone}`);
             });
         }
 
@@ -208,10 +220,6 @@ export default function ClassifyStageTwo({ navigation }) {
 const ClassificationCard = ({ classificationEntry, handleRemoveClassification, navigation }) => {
     const { setClassificationToAdd } = useClassifyContext();
 
-    const subMeta = classifySubMaterialsDict?.[classificationEntry?.subMaterialId];
-    const matMeta = classifyMaterialStylesDict?.[classificationEntry?.materialId];
-    const meta = subMeta ?? matMeta ?? {};
-
     const key = classificationEntry?.subMaterialId ?? classificationEntry?.materialId;
 
     const onEdit = () => {
@@ -222,10 +230,13 @@ const ClassificationCard = ({ classificationEntry, handleRemoveClassification, n
         navigation.navigate("ClassifyStageFive", { editing: true });
     };
 
+    const itemLabel = getMaterialOrSubMaterialLabel(key);
+    const itemColor = getMaterialColor(key, "#333");
+
     return (
-        <View style={[styles.bagCardContainer, { backgroundColor: meta.color || "#333" }]}>
+        <View style={[styles.bagCardContainer, { backgroundColor: itemColor }]}>
             <Text style={styles.bagCardMainText}>
-                {meta.label ?? key}
+                {itemLabel}
             </Text>
 
             <View style={styles.bagCardSecundaryContainer}>

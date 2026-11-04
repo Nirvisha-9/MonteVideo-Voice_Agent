@@ -41,6 +41,11 @@ const MaterialsGrid = ({ materials, handleSelectMaterial }) => {
 };
 
 const MaterialCard = ({ item, cardSize, handleSelectMaterial }) => {
+    const imageUri = item.photoUrl || item.imageUrl;
+    const imageSource = imageUri
+        ? { uri: imageUri }
+        : item.imagePath;
+
     return (
         <TouchableOpacity
             key={item.id}
@@ -50,22 +55,24 @@ const MaterialCard = ({ item, cardSize, handleSelectMaterial }) => {
             <View
                 style={[
                     materialGridStyles.cardTextContainer,
-                    { backgroundColor: item.color }
+                    { backgroundColor: item.color || '#4C52E7' }
                 ]}>
-                <Text style={materialGridStyles.cardText}>
+                <Text style={materialGridStyles.cardText} numberOfLines={2}>
                     {item.label}
                 </Text>
             </View>
-            {(materialGridStyles?.cardPicture) && <View style={materialGridStyles.cardImageContainer}>
-                <Image
-                    source={item.imagePath}
-                    style={materialGridStyles.cardPicture}
-                    resizeMode="contain"
-                />
-            </View>}
+            {imageSource ? (
+                <View style={materialGridStyles.cardImageContainer}>
+                    <Image
+                        source={imageSource}
+                        style={materialGridStyles.cardPicture}
+                        resizeMode="contain"
+                    />
+                </View>
+            ) : null}
         </TouchableOpacity>
-    )
-}
+    );
+};
 
 const materialGridStyles = StyleSheet.create({
     cardImageContainer: {

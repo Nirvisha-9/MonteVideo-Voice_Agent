@@ -35,7 +35,14 @@ export default {
     },
     classify: { 
         addClassifications: "Agregar Clasificación",
-        confirmClassification: "Confirmar Clasificación"
+        confirmClassification: "Confirmar Clasificación",
+        selectClient: "Selecciona un cliente...",
+        selectLocation: "Selecciona una ubicación...",
+        selectDate: "Selecciona una fecha...",
+        collectionWeight: "Peso Recolección",
+        classifiedWeight: "Peso Clasificado",
+        locations: "Ubicaciones",
+        phoneEmail: "Tel/Email"
     },
     collect: {
         selectClient: "Selecciona un cliente...",
@@ -51,6 +58,37 @@ export default {
     navigation: {
         goBackTitle: "¿Estás seguro de que quieres volver?",
         goBackDescription: "Los cambios no guardados se perderán."
+    },
+    materials: {
+        papel_carton: "Papel Cartón",
+        plasticos: "Plásticos",
+        otros: "Otros",
+        organico: "Orgánico",
+        descarte: "Descarte"
+    },
+    subMaterials: {
+        papel_blanco: "Papel Blanco",
+        papel_color: "Papel Color",
+        revista: "Revista",
+        diario: "Diario",
+        carton_corrugado: "Cartón Corrugado",
+        carton_color: "Cartón Color",
+        pet_natural: "PET Natural (Cristal)",
+        pet_verde: "PET Verde",
+        pet_blanco: "PET Blanco",
+        pomo: "Pomo (Botella Polietileno)",
+        nylon_transparente: "Nylon Transparente (Polietileno Film)",
+        nylon_color: "Nylon Color (Polietileno Film)",
+        espuma: "Espuma (Poliestireno Expandido)",
+        polipropileno: "Polipropileno PP (5)",
+        poliestireno: "Poliestireno PS (6)",
+        latas_aluminio: "Latas-Aluminio",
+        latas_chatarra: "Latas-Chatarra",
+        electronicos: "Electrónicos",
+        vidrio: "Vidrio",
+        tetrabrik: "Tetrabrik",
+        descarte: "Descarte",
+        organico: "Orgánico"
     },
     sharedFields: {
         noMore: "No hay más elementos",
@@ -77,6 +115,14 @@ export default {
         contact: "Contacto",
         phone: "Teléfono",
         email: "Correo",
-        address: "Dirección"
+        address: "Dirección",
+        loading: "Cargando...",
+        place: "Lugar",
+        unknownClient: "Cliente Desconocido",
+        unknownPlace: "Lugar Desconocido",
+        close: "Cerrar",
+        noMaterials: "No hay materiales disponibles",
+        noSubMaterials: "No hay submateriales disponibles",
+        retry: "Reintentar"
     }
 };

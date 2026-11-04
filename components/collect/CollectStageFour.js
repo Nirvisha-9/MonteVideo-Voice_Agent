@@ -3,7 +3,7 @@ import { Image, ImageBackground, Text, TextInput, View } from 'react-native';
 import { TouchableOpacity } from 'react-native-gesture-handler';
 import dictionary from '../../localization/dictionary';
 import collectSharedStyles from '../../components/collect/collectStyles';
-import { collectMaterialStylesDict } from './collectMaterialStyles';
+import { getMaterialOrSubMaterialLabel } from '../../services/materialService';
 import { useCollectContext } from '../../context/CollectContext';
 
 export default function CollectStageFour({ navigation, route }) {
@@ -107,7 +107,7 @@ export default function CollectStageFour({ navigation, route }) {
                     </TouchableOpacity>
                 </View>
                 <Text style={collectSharedStyles.title}>
-                    {collectionToAdd ? collectMaterialStylesDict[collectionToAdd]?.label : ''}
+                    {collectionToAdd ? getMaterialOrSubMaterialLabel(collectionToAdd) : ''}
                 </Text>
                 <View>
                     <Text style={collectSharedStyles.fieldText}>

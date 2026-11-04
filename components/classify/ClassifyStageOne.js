@@ -70,7 +70,7 @@ export default function ClassifyStageOne({ navigation }) {
                         style={classifySharedStyles.picker}
                         onValueChange={(itemValue) => handleUpdateClient(itemValue)}
                     >
-                        <Picker.Item label="Select a client..." value={null} />
+                        <Picker.Item label={dictionary?.classify?.selectClient || dictionary?.collect?.selectClient || "Select a client..."} value={null} />
                         {clients?.map((client, index) => (
                             <Picker.Item key={client.id} label={client.client_name} value={client} />
                         ))}
@@ -85,7 +85,7 @@ export default function ClassifyStageOne({ navigation }) {
                         style={classifySharedStyles.picker}
                         onValueChange={(itemValue) => handleUpdateLocation(itemValue)}
                     >
-                        <Picker.Item label="Select a location..." value={null} />
+                        <Picker.Item label={dictionary?.classify?.selectLocation || dictionary?.collect?.selectLocation || "Select a location..."} value={null} />
                         {selectedClient?.locations && Array.isArray(selectedClient.locations) && selectedClient.locations.map((location, index) => (
                             <Picker.Item key={location.id} label={location.name} value={location} />
                         ))}
@@ -100,7 +100,7 @@ export default function ClassifyStageOne({ navigation }) {
                         style={classifySharedStyles.picker}
                         onValueChange={(itemValue) => handleUpdateCollection(itemValue)}
                     >
-                        <Picker.Item label="Select a date..." value={null} />
+                        <Picker.Item label={dictionary?.classify?.selectDate || "Select a date..."} value={null} />
                         {filteredCollections.map((pickup, index) => (
                             <Picker.Item
                                 key={pickup.id || index}

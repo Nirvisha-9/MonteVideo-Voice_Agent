@@ -36,6 +36,13 @@ export default {
     classify: { 
         addClassifications: "Add Classification",
         confirmClassification: "Confirm Classification",
+        selectClient: "Select a client...",
+        selectLocation: "Select a location...",
+        selectDate: "Select a date...",
+        collectionWeight: "Collection Weight",
+        classifiedWeight: "Classified Weight",
+        locations: "Locations",
+        phoneEmail: "Phone/Email"
     },
     collect: {
         selectClient: "Select a client...",
@@ -51,6 +58,37 @@ export default {
     navigation: {
         goBackTitle: "Are you sure you want to go back?",
         goBackDescription: "Unsaved changes will be lost."
+    },
+    materials: {
+        papel_carton: "Paper & Cardboard",
+        plasticos: "Plastics",
+        otros: "Other",
+        organico: "Organic",
+        descarte: "Discard"
+    },
+    subMaterials: {
+        papel_blanco: "White Paper",
+        papel_color: "Colored Paper",
+        revista: "Magazine",
+        diario: "Newspaper",
+        carton_corrugado: "Corrugated Cardboard",
+        carton_color: "Colored Cardboard",
+        pet_natural: "Clear PET (Crystal)",
+        pet_verde: "Green PET",
+        pet_blanco: "White PET",
+        pomo: "Bottle (Polyethylene)",
+        nylon_transparente: "Clear Film (Polyethylene Film)",
+        nylon_color: "Colored Film (Polyethylene Film)",
+        espuma: "Foam (Expanded Polystyrene)",
+        polipropileno: "Polypropylene PP (5)",
+        poliestireno: "Polystyrene PS (6)",
+        latas_aluminio: "Aluminum Cans",
+        latas_chatarra: "Scrap Metal Cans",
+        electronicos: "Electronics",
+        vidrio: "Glass",
+        tetrabrik: "Tetra Pak",
+        descarte: "Discard",
+        organico: "Organic"
     },
     sharedFields: {
         noMore: "No More Items",
@@ -77,6 +115,14 @@ export default {
         contact: "Contact",
         phone: "Phone",
         email: "Email",
-        address: "Address"
+        address: "Address",
+        loading: "Loading...",
+        place: "Place",
+        unknownClient: "Unknown Client",
+        unknownPlace: "Unknown Place",
+        close: "Close",
+        noMaterials: "No materials available",
+        noSubMaterials: "No submaterials available",
+        retry: "Retry"
     }
 };

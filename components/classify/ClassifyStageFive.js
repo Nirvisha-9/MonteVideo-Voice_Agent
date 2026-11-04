@@ -3,7 +3,7 @@ import { View, Text, TextInput, ImageBackground } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
 import classifySharedStyles from "./classifyStyles";
 import dictionary from "../../localization/dictionary";
-import { classifySubMaterialsDict, classifyMaterialStylesDict } from "./classifyMaterialStyles";
+import { getMaterialOrSubMaterialLabel } from "../../services/materialService";
 import { useClassifyContext } from '../../context/ClassifyContext';
 
 export default function ClassifyStageFive({ navigation, route }) {
@@ -108,11 +108,7 @@ export default function ClassifyStageFive({ navigation, route }) {
                     </TouchableOpacity>
                 </View>
                 <Text style={classifySharedStyles.title}>
-                    {
-                        classifySubMaterialsDict[classificationToAdd.subMaterialId]?.label
-                        ?? classifyMaterialStylesDict[classificationToAdd.materialId]?.label
-                        ?? ''
-                    }
+                    {getMaterialOrSubMaterialLabel(classificationToAdd?.subMaterialId || classificationToAdd?.materialId)}
                 </Text>
                 <View>
                     <Text style={classifySharedStyles.fieldText}>
