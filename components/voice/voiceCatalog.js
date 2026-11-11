@@ -1,7 +1,9 @@
-// Voice Agent prototype — English catalog.
-// Mirrors the Clasificar materials used elsewhere in the app, but with the
-// doc's English top-level category names. Kept fully self-contained so the
-// existing manual flow and its data are never touched.
+// Voice Agent catalog.
+// Materials come from Firestore via `loadVoiceCatalog` (the list the admin page
+// edits, shared with the manual Clasificar flow). The lists below are only the
+// offline fallback.
+
+import { fetchClassifyRootMaterials, fetchClassifySubMaterials } from '../../services/materialService';
 
 // Example collection context used by the voice prototype (from the design doc).
 export const VOICE_CONTEXT = { client: 'WTC', location: 'Towers 1 2 3' };
@@ -61,3 +63,51 @@ export const VOICE_SUBCATEGORIES = {
 
 export const WAKE_WORD = 'monte';
 export const AGENT_NAME = 'Monte';
+
+// "Which type of ___ is it?" words for the admin's existing categories.
+// Categories added later in the admin page fall back to their own label.
+const TYPE_WORDS = {
+    papel_carton: { en: 'paper', es: 'papel' },
+    plasticos: { en: 'plastic', es: 'plástico' },
+    otros: { en: 'material', es: 'material' },
+};
+
+const staticCatalog = (lang) => ({
+    categories: getCategories(lang),
+    subcategories: VOICE_SUBCATEGORIES,
+});
+
+/**
+ * Loads the materials the admin page manages (Firestore `materials`), the same
+ * source the manual Clasificar flow uses, shaped for the voice agent:
+ * { categories: [{ id, label, typeWord, hasSub }], subcategories: { [catId]: [{ id, label }] } }.
+ * Falls back to the built-in list when offline or when nothing is configured.
+ */
+export async function loadVoiceCatalog(lang) {
+    const L = lang === 'es' ? 'es' : 'en';
+    try {
+        const roots = await fetchClassifyRootMaterials(L);
+        if (!roots.length) return staticCatalog(L);
+
+        const subLists = await Promise.all(
+            roots.map((m) => (m.hasSubMaterials ? fetchClassifySubMaterials(m.id, L) : []))
+        );
+        const categories = [];
+        const subcategories = {};
+        roots.forEach((m, i) => {
+            const subs = subLists[i].map((s) => ({ id: s.id, label: s.label }));
+            const hasSub = subs.length > 0;
+            if (hasSub) subcategories[m.id] = subs;
+            categories.push({
+                id: m.id,
+                label: m.label,
+                typeWord: hasSub ? TYPE_WORDS[m.id]?.[L] || m.label.toLowerCase() : null,
+                hasSub,
+            });
+        });
+        return { categories, subcategories };
+    } catch (e) {
+        console.warn('Voice agent: using built-in materials list —', e?.message || e);
+        return staticCatalog(L);
+    }
+}

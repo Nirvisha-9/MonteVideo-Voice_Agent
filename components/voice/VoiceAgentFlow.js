@@ -21,6 +21,7 @@ import { peekVoiceClients, prefetchVoiceClients } from './voiceClients';
 import {
     getCategories,
     VOICE_SUBCATEGORIES,
+    loadVoiceCatalog,
     VOICE_CONTEXT,
     AGENT_NAME,
 } from './voiceCatalog';
@@ -197,14 +198,29 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
     const readOutRef = useRef(null);
     readOutRef.current = readOut;
 
-    const CATS = useMemo(() => getCategories(VOICE_LANG), [VOICE_LANG]);
+    // Materials from the admin page (Firestore); the built-in list until they load.
+    const [catalog, setCatalog] = useState(() => ({
+        categories: getCategories(VOICE_LANG),
+        subcategories: VOICE_SUBCATEGORIES,
+    }));
+    useEffect(() => {
+        let alive = true;
+        loadVoiceCatalog(VOICE_LANG).then((c) => {
+            if (alive) setCatalog(c);
+        });
+        return () => {
+            alive = false;
+        };
+    }, [VOICE_LANG]);
+    const CATS = catalog.categories;
+    const SUBS = catalog.subcategories;
     const categoryOptions = useMemo(
         () => CATS.map((c) => ({ id: c.id, label: c.label })),
         [CATS]
     );
     const subOptions = useMemo(
-        () => (pending?.catId ? VOICE_SUBCATEGORIES[pending.catId] || [] : []),
-        [pending?.catId]
+        () => (pending?.catId ? SUBS[pending.catId] || [] : []),
+        [pending?.catId, SUBS]
     );
 
     const clientOptions = useMemo(
@@ -284,9 +300,9 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             ...categoryOptions.map((o) => o.label),
             ...clients.map((c) => c.client_name),
             ...clients.flatMap((c) => (Array.isArray(c.locations) ? c.locations.map((l) => l.name) : [])),
-            ...Object.values(VOICE_SUBCATEGORIES).flatMap((subs) => subs.map((s) => s.label)),
+            ...Object.values(SUBS).flatMap((subs) => subs.map((s) => s.label)),
         ],
-        [categoryOptions, clients]
+        [categoryOptions, clients, SUBS]
     );
 
     const voice = useSpeech({
@@ -946,7 +962,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             transcript: text,
             language: VOICE_LANG,
             items: items.map((it) => ({ label: it.label, kg: it.weight })),
-            catalog: CATS.map((c) => ({ id: c.id, label: c.label, subs: VOICE_SUBCATEGORIES[c.id] || [] })),
+            catalog: CATS.map((c) => ({ id: c.id, label: c.label, subs: SUBS[c.id] || [] })),
         });
         setInterpreting(false);
         if (!r) {
@@ -970,7 +986,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
             applyRevision(target.subId, { ...target, weight: newWeight });
             return true;
         }
-        const sub = cat.hasSub ? (VOICE_SUBCATEGORIES[cat.id] || []).find((s) => s.id === r.subcategory) : cat;
+        const sub = cat.hasSub ? (SUBS[cat.id] || []).find((s) => s.id === r.subcategory) : cat;
         if (sub) {
             applyRevision(target.subId, {
                 catId: cat.id,
@@ -1217,6 +1233,7 @@ export default function VoiceAgentFlow({ navigation, screenNames, onExit, lang =
         }
         if (typeLabel === 'category') {
             const cat = CATS.find((c) => c.id === chosen.id);
+            if (!cat) return; // the list was refreshed while this option was on screen
             if (cat.hasSub) {
                 setPending({
                     catId: cat.id,
