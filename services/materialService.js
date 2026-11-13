@@ -2,6 +2,64 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { db } from '../firebase';
 import { getLanguage, subscribeLanguage } from '../localization/dictionary';
 
+const DEFAULT_COLOR = '#4C52E7';
+
+// Colors for materials the admin saved without one. Each gets its own color,
+// never one already saved on another material. Dark enough for white labels.
+const AUTO_COLORS = [
+    '#E63946', '#2A9D8F', '#8E44AD', '#D35400', '#27AE60', '#E84393',
+    '#00838F', '#6D4C41', '#607D8B', '#AD1457', '#2E7D32', '#F4511E',
+    '#7B1FA2', '#00695C', '#B71C1C', '#558B2F', '#C2185B', '#5E35B1',
+    '#0097A7', '#9E6B00',
+];
+const autoColors = new Map(); // material id -> assigned color
+
+const hashString = (str) => {
+    let h = 0;
+    for (let i = 0; i < str.length; i += 1) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    return h;
+};
+
+const createdMillis = (data) => {
+    const t = data?.createdAt;
+    if (!t) return 0;
+    if (typeof t.toMillis === 'function') return t.toMillis();
+    if (typeof t.seconds === 'number') return t.seconds * 1000;
+    const ms = new Date(t).getTime();
+    return Number.isNaN(ms) ? 0 : ms;
+};
+
+/**
+ * Picks a color for every material without a saved one: a pseudo-random start
+ * from its id (so it stays the same on every load), moved on to the next free
+ * color. Older materials pick first, so adding one never recolors the others.
+ */
+function assignAutoColors(docs) {
+    const taken = new Set(
+        docs.map((d) => d.data()?.color).filter(Boolean).map((c) => c.toUpperCase())
+    );
+    taken.add(DEFAULT_COLOR);
+    const uncolored = docs
+        .filter((d) => !d.data()?.color)
+        .map((d) => ({ id: d.data()?.canonicalId || d.id, at: createdMillis(d.data()) }))
+        .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+
+    autoColors.clear();
+    uncolored.forEach(({ id }) => {
+        const start = hashString(id) % AUTO_COLORS.length;
+        let color = AUTO_COLORS[start]; // palette used up: reuse the hashed one
+        for (let i = 0; i < AUTO_COLORS.length; i += 1) {
+            const c = AUTO_COLORS[(start + i) % AUTO_COLORS.length];
+            if (!taken.has(c)) {
+                color = c;
+                break;
+            }
+        }
+        taken.add(color);
+        autoColors.set(id, color);
+    });
+}
+
 // In-memory cache of materials metadata keyed by material/submaterial ID
 const materialCache = new Map();
 const cacheListeners = new Set();
@@ -63,7 +121,7 @@ export function normalizeMaterial(docData, docId, lang = getLanguage()) {
     const names = docData?.names || {};
     const name = docData?.name || '';
     const label = names[lang] || names.es || names.en || name || id || '';
-    const color = docData?.color || '#4C52E7';
+    const color = docData?.color || autoColors.get(id) || DEFAULT_COLOR;
     const photoUrl = docData?.photoUrl || docData?.imageUrl || null;
     const parentId = docData?.parentId || null;
     const workflows = Array.isArray(docData?.workflows) ? docData.workflows : [];
@@ -119,9 +177,9 @@ export async function fetchAllActiveMaterials(lang = getLanguage()) {
             where('status', '==', 'active')
         );
         const snapshot = await getDocs(q);
-        const materials = snapshot.docs
-            .filter((d) => isValidMaterialDocument(d.data(), d.id))
-            .map((d) => normalizeMaterial(d.data(), d.id, lang));
+        const validDocs = snapshot.docs.filter((d) => isValidMaterialDocument(d.data(), d.id));
+        assignAutoColors(validDocs);
+        const materials = validDocs.map((d) => normalizeMaterial(d.data(), d.id, lang));
 
         // A category has sub-materials when active ones point at it, whatever
         // its `hasSubMaterials` flag says (the flag is not kept in sync by the admin).
@@ -272,7 +330,7 @@ export function getMaterialOrSubMaterialLabel(id, lang = getLanguage()) {
 /**
  * Synchronous cached lookup of a material's badge color.
  */
-export function getMaterialColor(id, defaultColor = '#4C52E7') {
+export function getMaterialColor(id, defaultColor = DEFAULT_COLOR) {
     if (!id) return defaultColor;
     const mat = materialCache.get(id);
     return mat?.color || defaultColor;
