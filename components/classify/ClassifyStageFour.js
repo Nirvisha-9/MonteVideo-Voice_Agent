@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { ImageBackground, Text, TouchableOpacity, View, ActivityIndicator, StyleSheet } from "react-native";
+import { ImageBackground, Text, TouchableOpacity, View, ActivityIndicator, StyleSheet, RefreshControl } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 import SubMaterialCard from "../SubMaterialCard";
 import classifySharedStyles from "./classifyStyles";
@@ -18,6 +18,7 @@ export default function ClassifyStageFour({ navigation }) {
     const [subMaterialsList, setSubMaterialsList] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
 
     const handleSelectSubMaterial = (subMaterial) => {
         handleUpdateClassificationToAddSubMaterialId(subMaterial.id);
@@ -51,6 +52,21 @@ export default function ClassifyStageFour({ navigation }) {
         loadSubMaterials();
     }, [loadSubMaterials]);
 
+    // Pull-to-refresh: picks up admin changes while keeping the list on screen
+    const handleRefresh = useCallback(async () => {
+        if (!parentId) return;
+        try {
+            setRefreshing(true);
+            const data = await fetchClassifySubMaterials(parentId, getLanguage());
+            setSubMaterialsList(data);
+            setError(null);
+        } catch (err) {
+            console.error(`Failed to refresh submaterials for ${parentId}:`, err);
+        } finally {
+            setRefreshing(false);
+        }
+    }, [parentId]);
+
     useEffect(() => {
         const unsub = subscribeLanguage(() => {
             loadSubMaterials();
@@ -63,7 +79,19 @@ export default function ClassifyStageFour({ navigation }) {
             source={require('../../assets/background_7.jpg')}
             style={classifySharedStyles.backgroundImage}
         >
-            <ScrollView style={classifySharedStyles.mainContainer}>
+            <ScrollView
+                style={classifySharedStyles.mainContainer}
+                contentContainerStyle={{ paddingBottom: 40 }}
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
+                        tintColor={COLORS.white}
+                        colors={[COLORS.primary]}
+                    />
+                }
+            >
                 <TouchableOpacity onPress={() => handleGoBack(navigation)}>
                     <Text style={classifySharedStyles.backButton}>
                         {dictionary?.sharedFields?.goBack}

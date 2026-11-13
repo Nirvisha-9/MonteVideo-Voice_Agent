@@ -55,7 +55,11 @@ export function isValidMaterialDocument(docData, docId) {
  * Normalizes a raw Firestore material document into a consistent structure.
  */
 export function normalizeMaterial(docData, docId, lang = getLanguage()) {
-    const id = docId || docData?.id;
+    // Some admin-created categories are stored under their display name
+    // ("Papel y cartón") with the short code in `canonicalId`; sub-materials
+    // point at that code through `parentId`, so it is the material's id.
+    const storedId = docId || docData?.id;
+    const id = docData?.canonicalId || storedId;
     const names = docData?.names || {};
     const name = docData?.name || '';
     const label = names[lang] || names.es || names.en || name || id || '';
@@ -70,6 +74,7 @@ export function normalizeMaterial(docData, docId, lang = getLanguage()) {
     return {
         ...docData,
         id,
+        docId: storedId,
         name,
         names,
         label,
@@ -92,6 +97,8 @@ function cacheMaterials(materials) {
     materials.forEach((mat) => {
         if (mat?.id) {
             materialCache.set(mat.id, mat);
+            // records saved with the stored document id still resolve
+            if (mat.docId && mat.docId !== mat.id) materialCache.set(mat.docId, mat);
             updated = true;
         }
     });
@@ -115,6 +122,15 @@ export async function fetchAllActiveMaterials(lang = getLanguage()) {
         const materials = snapshot.docs
             .filter((d) => isValidMaterialDocument(d.data(), d.id))
             .map((d) => normalizeMaterial(d.data(), d.id, lang));
+
+        // A category has sub-materials when active ones point at it, whatever
+        // its `hasSubMaterials` flag says (the flag is not kept in sync by the admin).
+        const parentIds = new Set(materials.map((m) => m.parentId).filter(Boolean));
+        materials.forEach((m) => {
+            if (m.parentId) return;
+            const embedded = Array.isArray(m.subMaterials) && m.subMaterials.length > 0;
+            m.hasSubMaterials = parentIds.has(m.id) || parentIds.has(m.docId) || embedded;
+        });
         cacheMaterials(materials);
 
         // Also check for embedded submaterials in legacy root docs
@@ -189,9 +205,12 @@ export async function fetchClassifyRootMaterials(lang = getLanguage()) {
 export async function fetchClassifySubMaterials(parentCategoryId, lang = getLanguage()) {
     if (!parentCategoryId) return [];
     try {
+        // children may reference the parent by its short code or its document id
+        const parent = materialCache.get(parentCategoryId);
+        const parentIds = [...new Set([parentCategoryId, parent?.id, parent?.docId].filter(Boolean))];
         const q = query(
             collection(db, 'materials'),
-            where('parentId', '==', parentCategoryId),
+            where('parentId', 'in', parentIds),
             where('status', '==', 'active')
         );
         const snapshot = await getDocs(q);
@@ -201,7 +220,6 @@ export async function fetchClassifySubMaterials(parentCategoryId, lang = getLang
 
         // If no flat child documents found, check if parent in cache has embedded subMaterials
         if (subs.length === 0) {
-            const parent = materialCache.get(parentCategoryId);
             if (Array.isArray(parent?.subMaterials) && parent.subMaterials.length > 0) {
                 subs = parent.subMaterials
                     .filter((s) => isValidMaterialDocument(s, s?.id))

@@ -18,6 +18,7 @@ export default function ClassifyStageThree({ navigation }) {
     const [materials, setMaterials] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
 
     const loadMaterials = useCallback(async () => {
         try {
@@ -36,6 +37,20 @@ export default function ClassifyStageThree({ navigation }) {
     useEffect(() => {
         loadMaterials();
     }, [loadMaterials]);
+
+    // Pull-to-refresh: picks up admin changes while keeping the grid on screen
+    const handleRefresh = useCallback(async () => {
+        try {
+            setRefreshing(true);
+            const data = await fetchClassifyRootMaterials(getLanguage());
+            setMaterials(data);
+            setError(null);
+        } catch (err) {
+            console.error('Failed to refresh classify root materials:', err);
+        } finally {
+            setRefreshing(false);
+        }
+    }, []);
 
     // Re-load when language changes
     useEffect(() => {
@@ -90,6 +105,8 @@ export default function ClassifyStageThree({ navigation }) {
                     <MaterialsGrid
                         handleSelectMaterial={handleSelectMaterial}
                         materials={materials}
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
                     />
                 )}
             </View>

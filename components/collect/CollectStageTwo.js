@@ -6,7 +6,8 @@ import {
     StyleSheet,
     Text,
     View,
-    Alert
+    Alert,
+    ScrollView
 } from 'react-native';
 import { TouchableOpacity } from 'react-native-gesture-handler';
 import dictionary from '../../localization/dictionary';
@@ -198,15 +199,22 @@ export default function CollectStageTwo({ navigation }) {
                     {`${parseFloat(form.collections.reduce((total, bag) => total + (Number(bag.weight) || 0), 0).toFixed(2))} Kg`}
                 </Text>
 
-                {form.collections.map((bagEntry, index) => (
-                    <BagCard
-                        navigation={navigation}
-                        key={index}
-                        bagEntry={bagEntry}
-                        handleRemoveCollection={handleRemoveCollection}
-                        dictionary={dictionary}
-                    />
-                ))}
+                {/* bottom padding keeps the last bag clear of the floating button bar */}
+                <ScrollView
+                    style={{ flex: 1 }}
+                    contentContainerStyle={{ paddingBottom: 110 + insets.bottom }}
+                    showsVerticalScrollIndicator={false}
+                >
+                    {form.collections.map((bagEntry, index) => (
+                        <BagCard
+                            navigation={navigation}
+                            key={index}
+                            bagEntry={bagEntry}
+                            handleRemoveCollection={handleRemoveCollection}
+                            dictionary={dictionary}
+                        />
+                    ))}
+                </ScrollView>
 
                 <View
                     style={[

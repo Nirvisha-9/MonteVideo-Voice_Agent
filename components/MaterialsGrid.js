@@ -1,7 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Image, ScrollView, RefreshControl } from 'react-native';
+import { COLORS } from '../helper/theme';
 
-const MaterialsGrid = ({ materials, handleSelectMaterial }) => {
+// Pass `onRefresh` to let the worker pull the grid down to reload it.
+const MaterialsGrid = ({ materials, handleSelectMaterial, refreshing = false, onRefresh }) => {
     // Calculate card size based on screen width
     const numColumns = 2;
     const cardMargin = 24;
@@ -17,7 +19,21 @@ const MaterialsGrid = ({ materials, handleSelectMaterial }) => {
     }
 
     return (
-        <View>
+        <ScrollView
+            style={materialGridStyles.scroll}
+            contentContainerStyle={materialGridStyles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+                onRefresh ? (
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor={COLORS.white}
+                        colors={[COLORS.primary]}
+                    />
+                ) : undefined
+            }
+        >
             {rows.map((rowItems, rowIndex) => (
                 <View
                     key={rowIndex}
@@ -36,7 +52,7 @@ const MaterialsGrid = ({ materials, handleSelectMaterial }) => {
                     ))}
                 </View>
             ))}
-        </View>
+        </ScrollView>
     );
 };
 
@@ -75,6 +91,12 @@ const MaterialCard = ({ item, cardSize, handleSelectMaterial }) => {
 };
 
 const materialGridStyles = StyleSheet.create({
+    scroll: {
+        flex: 1,
+    },
+    scrollContent: {
+        paddingBottom: 24,
+    },
     cardImageContainer: {
         width: "100%",
         height: "70%",

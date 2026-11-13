@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ImageBackground, Image, TextInput, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ImageBackground, Image, TextInput, Dimensions, ScrollView } from 'react-native';
 import dictionary from '../localization/dictionary';
 import LanguageToggle from '../components/LanguageToggle';
 
@@ -37,62 +37,68 @@ const Signup = ({ screenNames, navigation }) => {
                         {dictionary?.sharedFields.goBack}
                     </Text>
                 </TouchableOpacity>
-                <Text style={signUpStyles.title}>
-                    {dictionary?.signUp.signUp}
-                </Text>
-
-                <Text style={signUpStyles.label}>
-                    {dictionary?.signUp.name}
-                </Text>
-                <TextInput
-                    style={signUpStyles.input}
-                    placeholder="Ingrese su nombre"
-                    placeholderTextColor={"rgba(255, 255, 255, 0.7)"}
-                    value={firstName}
-                    onChangeText={setFirstName}
-                />
-
-                <Text style={signUpStyles.label}>
-                    {dictionary?.signUp.lastName}
-                </Text>
-                <TextInput
-                    style={signUpStyles.input}
-                    placeholder="Ingrese su apellido"
-                    placeholderTextColor={"rgba(255, 255, 255, 0.7)"}
-                    value={lastName}
-                    onChangeText={setLastName}
-                />
-
-                <Text style={signUpStyles.label}>
-                    {dictionary?.signUp.telephoneNumber}
-                </Text>
-                <TextInput
-                    style={signUpStyles.input}
-                    placeholder="Ingrese su número de teléfono"
-                    placeholderTextColor={"rgba(255, 255, 255, 0.7)"}
-                    value={phoneNumber}
-                    onChangeText={setPhoneNumber}
-                    keyboardType="phone-pad"
-                />
-
-                <Text style={signUpStyles.label}>
-                    {dictionary?.signUp.telephoneNumber}
-                </Text>
-                <TextInput
-                    style={signUpStyles.input}
-                    placeholder="Ingrese su correo electrónico"
-                    placeholderTextColor={"rgba(255, 255, 255, 0.7)"}
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                />
-                <TouchableOpacity
-                    style={signUpStyles.signUpButton}
-                    onPress={sendForm}
+                <ScrollView
+                    contentContainerStyle={{ paddingBottom: 40 }}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
                 >
-                    <Text style={signUpStyles.buttonText}>{dictionary?.signUp.signUp}</Text>
-                </TouchableOpacity>
+                    <Text style={signUpStyles.title}>
+                        {dictionary?.signUp.signUp}
+                    </Text>
+
+                    <Text style={signUpStyles.label}>
+                        {dictionary?.signUp.name}
+                    </Text>
+                    <TextInput
+                        style={signUpStyles.input}
+                        placeholder="Ingrese su nombre"
+                        placeholderTextColor={"rgba(255, 255, 255, 0.7)"}
+                        value={firstName}
+                        onChangeText={setFirstName}
+                    />
+
+                    <Text style={signUpStyles.label}>
+                        {dictionary?.signUp.lastName}
+                    </Text>
+                    <TextInput
+                        style={signUpStyles.input}
+                        placeholder="Ingrese su apellido"
+                        placeholderTextColor={"rgba(255, 255, 255, 0.7)"}
+                        value={lastName}
+                        onChangeText={setLastName}
+                    />
+
+                    <Text style={signUpStyles.label}>
+                        {dictionary?.signUp.telephoneNumber}
+                    </Text>
+                    <TextInput
+                        style={signUpStyles.input}
+                        placeholder="Ingrese su número de teléfono"
+                        placeholderTextColor={"rgba(255, 255, 255, 0.7)"}
+                        value={phoneNumber}
+                        onChangeText={setPhoneNumber}
+                        keyboardType="phone-pad"
+                    />
+
+                    <Text style={signUpStyles.label}>
+                        {dictionary?.signUp.telephoneNumber}
+                    </Text>
+                    <TextInput
+                        style={signUpStyles.input}
+                        placeholder="Ingrese su correo electrónico"
+                        placeholderTextColor={"rgba(255, 255, 255, 0.7)"}
+                        value={email}
+                        onChangeText={setEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                    />
+                    <TouchableOpacity
+                        style={signUpStyles.signUpButton}
+                        onPress={sendForm}
+                    >
+                        <Text style={signUpStyles.buttonText}>{dictionary?.signUp.signUp}</Text>
+                    </TouchableOpacity>
+                </ScrollView>
             </View>
         </ImageBackground>
     )

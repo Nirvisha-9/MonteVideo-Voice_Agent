@@ -17,6 +17,7 @@ export default function CollectStageThree({ navigation }) {
     const [materials, setMaterials] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
 
     const loadMaterials = useCallback(async () => {
         try {
@@ -35,6 +36,20 @@ export default function CollectStageThree({ navigation }) {
     useEffect(() => {
         loadMaterials();
     }, [loadMaterials]);
+
+    // Pull-to-refresh: picks up admin changes while keeping the grid on screen
+    const handleRefresh = useCallback(async () => {
+        try {
+            setRefreshing(true);
+            const data = await fetchCollectMaterials(getLanguage());
+            setMaterials(data);
+            setError(null);
+        } catch (err) {
+            console.error('Failed to refresh collect materials:', err);
+        } finally {
+            setRefreshing(false);
+        }
+    }, []);
 
     // Re-render / update materials when language toggles
     useEffect(() => {
@@ -87,6 +102,8 @@ export default function CollectStageThree({ navigation }) {
                     <MaterialsGrid
                         handleSelectMaterial={handleSelectMaterial}
                         materials={materials}
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
                     />
                 )}
             </View>
